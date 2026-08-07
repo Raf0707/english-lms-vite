@@ -30,7 +30,7 @@ import {
   Video,
   XCircle
 } from 'lucide-react';
-import { ChangeEvent, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type Dispatch, type DragEvent as ReactDragEvent, type SetStateAction } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { Badge, Button, Card } from '../components/ui';
@@ -84,6 +84,11 @@ type DragItem =
   | { kind: 'module'; moduleId: string }
   | { kind: 'lesson'; moduleId: string; lessonId: string }
   | { kind: 'block'; moduleId: string; lessonId: string; blockId: string };
+
+type EditorDropTarget =
+  | { kind: 'module'; moduleId: string; edge: 'before' | 'after' }
+  | { kind: 'lesson'; moduleId: string; lessonId?: string; edge: 'before' | 'after' | 'end' }
+  | { kind: 'block'; moduleId: string; lessonId: string; blockId?: string; edge: 'before' | 'after' | 'end' };
 
 const clipboardPrefix = 'LINGUA_LMS_EDITOR_V1:';
 
@@ -154,29 +159,171 @@ export function CourseEditorPage() {
   const [tagsInput, setTagsInput] = useState(() => course.tags.join(', '));
   const [editorClipboard, setEditorClipboard] = useState<EditorClipboard | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
+  const [dropTarget, setDropTarget] = useState<EditorDropTarget | null>(null);
   const dragItemRef = useRef<DragItem | null>(null);
-  const beginEditorDrag = (event: ReactDragEvent<HTMLElement>, item: DragItem) => {
-    dragItemRef.current = item;
-    setDragItem(item);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('application/x-lingua-editor-drag', JSON.stringify(item));
-    event.dataTransfer.setData('text/plain', JSON.stringify(item));
-    const preview = event.currentTarget.closest('.editor-module, .editor-lesson, .lesson-block-editor') as HTMLElement | null;
-    if (preview) {
-      try { event.dataTransfer.setDragImage(preview, Math.min(36, preview.clientWidth / 5), 24); } catch { /* Browser may ignore custom drag image. */ }
-    }
+  const pointerDragRef = useRef<DragItem | null>(null);
+  const dropTargetRef = useRef<EditorDropTarget | null>(null);
+
+  const setActiveDropTarget = (target: EditorDropTarget | null) => {
+    dropTargetRef.current = target;
+    setDropTarget(target);
   };
+
   const endEditorDrag = () => {
     dragItemRef.current = null;
+    pointerDragRef.current = null;
     setDragItem(null);
+    setActiveDropTarget(null);
+    document.body.classList.remove('editor-pointer-dragging');
   };
+
   const activeEditorDrag = () => dragItemRef.current ?? dragItem;
+
+  // Kept for file/native drag events. Internal course reordering itself uses Pointer Events below,
+  // which is much more reliable than HTML5 drag-and-drop inside nested React cards.
   const allowEditorDrop = (event: ReactDragEvent<HTMLElement>, kind: DragItem['kind']) => {
     const active = activeEditorDrag();
     if (!active || active.kind !== kind) return false;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     return true;
+  };
+
+  const findPointerDropTarget = (item: DragItem, clientX: number, clientY: number): EditorDropTarget | null => {
+    const point = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (!point) return null;
+
+    if (item.kind === 'module') {
+      const element = point.closest<HTMLElement>('[data-editor-drop-kind="module"]');
+      if (!element) return null;
+      const moduleId = element.dataset.moduleId;
+      if (!moduleId) return null;
+      const rect = element.getBoundingClientRect();
+      return { kind: 'module', moduleId, edge: clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+    }
+
+    if (item.kind === 'lesson') {
+      const lessonElement = point.closest<HTMLElement>('[data-editor-drop-kind="lesson"]');
+      if (lessonElement) {
+        const moduleId = lessonElement.dataset.moduleId;
+        const lessonId = lessonElement.dataset.lessonId;
+        if (!moduleId || !lessonId) return null;
+        const rect = lessonElement.getBoundingClientRect();
+        return { kind: 'lesson', moduleId, lessonId, edge: clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+      }
+      const container = point.closest<HTMLElement>('[data-editor-drop-kind="lesson-container"]');
+      const moduleId = container?.dataset.moduleId;
+      return moduleId ? { kind: 'lesson', moduleId, edge: 'end' } : null;
+    }
+
+    const blockElement = point.closest<HTMLElement>('[data-editor-drop-kind="block"]');
+    if (blockElement) {
+      const moduleId = blockElement.dataset.moduleId;
+      const lessonId = blockElement.dataset.lessonId;
+      const blockId = blockElement.dataset.blockId;
+      if (!moduleId || !lessonId || !blockId) return null;
+      const rect = blockElement.getBoundingClientRect();
+      return { kind: 'block', moduleId, lessonId, blockId, edge: clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+    }
+    const container = point.closest<HTMLElement>('[data-editor-drop-kind="block-container"]');
+    const moduleId = container?.dataset.moduleId;
+    const lessonId = container?.dataset.lessonId;
+    return moduleId && lessonId ? { kind: 'block', moduleId, lessonId, edge: 'end' } : null;
+  };
+
+  const beginPointerDrag = (event: ReactPointerEvent<HTMLElement>, item: DragItem) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    pointerDragRef.current = item;
+    dragItemRef.current = item;
+    setDragItem(item);
+    setActiveDropTarget(null);
+    document.body.classList.add('editor-pointer-dragging');
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Pointer capture is optional. */ }
+  };
+
+  const movePointerDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const item = pointerDragRef.current;
+    if (!item) return;
+    event.preventDefault();
+    const target = findPointerDropTarget(item, event.clientX, event.clientY);
+    setActiveDropTarget(target);
+
+    // Comfortable dragging through long course programs.
+    if (event.clientY < 72) window.scrollBy({ top: -18, behavior: 'auto' });
+    else if (event.clientY > window.innerHeight - 72) window.scrollBy({ top: 18, behavior: 'auto' });
+  };
+
+  const applyPointerDrop = (active: DragItem, target: EditorDropTarget) => {
+    if (active.kind !== target.kind) return;
+    setCourse((current) => {
+      const next = structuredClone(current);
+
+      if (active.kind === 'module' && target.kind === 'module') {
+        if (active.moduleId === target.moduleId) return current;
+        const from = next.modules.findIndex((module) => module.id === active.moduleId);
+        if (from < 0) return current;
+        const [moved] = next.modules.splice(from, 1);
+        const targetIndex = next.modules.findIndex((module) => module.id === target.moduleId);
+        if (targetIndex < 0) return current;
+        next.modules.splice(target.edge === 'after' ? targetIndex + 1 : targetIndex, 0, moved);
+        return next;
+      }
+
+      if (active.kind === 'lesson' && target.kind === 'lesson') {
+        if (target.lessonId === active.lessonId) return current;
+        const sourceModule = next.modules.find((module) => module.id === active.moduleId);
+        const targetModule = next.modules.find((module) => module.id === target.moduleId);
+        if (!sourceModule || !targetModule) return current;
+        const from = sourceModule.lessons.findIndex((lesson) => lesson.id === active.lessonId);
+        if (from < 0) return current;
+        const [moved] = sourceModule.lessons.splice(from, 1);
+        if (target.edge === 'end' || !target.lessonId) targetModule.lessons.push(moved);
+        else {
+          const targetIndex = targetModule.lessons.findIndex((lesson) => lesson.id === target.lessonId);
+          if (targetIndex < 0) targetModule.lessons.push(moved);
+          else targetModule.lessons.splice(target.edge === 'after' ? targetIndex + 1 : targetIndex, 0, moved);
+        }
+        return next;
+      }
+
+      if (active.kind === 'block' && target.kind === 'block') {
+        if (target.blockId === active.blockId) return current;
+        const sourceModule = next.modules.find((module) => module.id === active.moduleId);
+        const sourceLesson = sourceModule?.lessons.find((lesson) => lesson.id === active.lessonId);
+        const targetModule = next.modules.find((module) => module.id === target.moduleId);
+        const targetLesson = targetModule?.lessons.find((lesson) => lesson.id === target.lessonId);
+        if (!sourceLesson || !targetLesson) return current;
+        const from = sourceLesson.blocks.findIndex((block) => block.id === active.blockId);
+        if (from < 0) return current;
+        const [moved] = sourceLesson.blocks.splice(from, 1);
+        if (target.edge === 'end' || !target.blockId) targetLesson.blocks.push(moved);
+        else {
+          const targetIndex = targetLesson.blocks.findIndex((block) => block.id === target.blockId);
+          if (targetIndex < 0) targetLesson.blocks.push(moved);
+          else targetLesson.blocks.splice(target.edge === 'after' ? targetIndex + 1 : targetIndex, 0, moved);
+        }
+        return next;
+      }
+
+      return current;
+    });
+  };
+
+  const finishPointerDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const active = pointerDragRef.current;
+    const target = dropTargetRef.current;
+    event.preventDefault();
+    event.stopPropagation();
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
+    if (active && target) applyPointerDrop(active, target);
+    endEditorDrag();
+  };
+
+  const cancelPointerDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
+    endEditorDrag();
   };
 
   const isAdmin = user.role === 'admin';
@@ -510,22 +657,22 @@ export function CourseEditorPage() {
       {tab === 'program' ? (
         <div className={`editor-program ${dragItem ? `is-reordering drag-${dragItem.kind}` : ''}`}>
           <div className="workspace-section__header editor-program-header"><div><h2>Программа курса</h2><p>Модули, уроки и произвольные блоки контента. Перетаскивайте их за ручку слева или используйте стрелки справа.</p></div><div className="editor-program-actions"><Button size="sm" variant="ghost" icon={<Eye size={16}/>} onClick={() => setPreviewOpen((value) => !value)}>{previewOpen ? 'Скрыть предпросмотр' : 'Предпросмотр'}</Button><Button size="sm" variant="ghost" onClick={collapseAll}>Свернуть всё</Button><Button size="sm" variant="ghost" onClick={expandAll}>Развернуть всё</Button><Button size="sm" variant="secondary" icon={<ClipboardPaste size={16}/>} onClick={pasteModule}>Вставить модуль</Button><Button size="sm" icon={<Plus size={17} />} onClick={addModule}>Добавить модуль</Button></div></div>
-          {dragItem ? <div className="editor-drag-guide"><GripVertical size={17}/><strong>{dragItem.kind === 'module' ? 'Перемещение модуля' : dragItem.kind === 'lesson' ? 'Перемещение урока' : 'Перемещение блока'}</strong><span>Наведите на нужную позицию — она подсветится, затем отпустите.</span></div> : null}
+          {dragItem ? <div className="editor-drag-guide"><GripVertical size={17}/><strong>{dragItem.kind === 'module' ? 'Перемещение модуля' : dragItem.kind === 'lesson' ? 'Перемещение урока' : 'Перемещение блока'}</strong><span>Тяните за ручку слева. Место вставки подсвечивается линией — отпустите, чтобы переместить.</span></div> : null}
           {course.modules.length === 0 ? <Card className="editor-empty"><GraduationCapIcon /><h3>Программа пока пуста</h3><p>Добавьте первый модуль, затем уроки и учебные материалы.</p><Button onClick={addModule}>Создать модуль</Button></Card> : null}
           <div className="editor-module-list">
             {course.modules.map((module, moduleIndex) => (
-              <Card className={`editor-module ${collapsedModules.has(module.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'module' && dragItem.moduleId === module.id ? 'is-dragging' : ''}`} key={module.id} onDragOver={(event) => { allowEditorDrop(event, 'module'); }} onDrop={(event) => { if (!allowEditorDrop(event, 'module')) return; event.stopPropagation(); dropModule(module.id); }}>
+              <Card data-editor-drop-kind="module" data-module-id={module.id} className={`editor-module ${collapsedModules.has(module.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'module' && dragItem.moduleId === module.id ? 'is-dragging' : ''} ${dropTarget?.kind === 'module' && dropTarget.moduleId === module.id ? `is-drop-target is-drop-${dropTarget.edge}` : ''}`} key={module.id}>
                 <header>
-                  <span className="editor-drag-handle" role="button" tabIndex={0} draggable onDragStart={(event) => beginEditorDrag(event, { kind: 'module', moduleId: module.id })} onDragEnd={endEditorDrag} title="Перетащить модуль" aria-label="Перетащить модуль"><GripVertical size={18}/></span>
+                  <span className="editor-drag-handle" role="button" tabIndex={0} onPointerDown={(event) => beginPointerDrag(event, { kind: 'module', moduleId: module.id })} onPointerMove={movePointerDrag} onPointerUp={finishPointerDrag} onPointerCancel={cancelPointerDrag} title="Зажмите и перетащите модуль" aria-label="Перетащить модуль"><GripVertical size={18}/></span>
                   <div className="module-number">{moduleIndex + 1}</div>
                   <div className="editor-module-fields"><input value={module.title} onChange={(event) => updateModule(module.id, { title: event.target.value })} /><input value={module.description} onChange={(event) => updateModule(module.id, { description: event.target.value })} placeholder="Краткое описание модуля" /></div>
                   <div className="editor-module__actions"><button onClick={() => moveModule(module.id, -1)} disabled={moduleIndex === 0} title="Модуль выше"><ArrowUp size={16}/></button><button onClick={() => moveModule(module.id, 1)} disabled={moduleIndex === course.modules.length - 1} title="Модуль ниже"><ArrowDown size={16}/></button><button onClick={() => copyEditorItem({ kind: 'module', data: module })} title="Копировать модуль"><Copy size={16}/></button><button onClick={() => pasteLesson(module.id)} title="Вставить скопированный урок"><ClipboardPaste size={16}/></button><button className="collapse-icon" onClick={() => toggleSet(setCollapsedModules, module.id)} title={collapsedModules.has(module.id) ? 'Развернуть модуль' : 'Свернуть модуль'}>{collapsedModules.has(module.id) ? <ChevronDown size={17}/> : <ChevronUp size={17}/>}</button><Button size="sm" variant="secondary" icon={<Plus size={15} />} onClick={() => addLesson(module.id)}>Урок</Button><button className="danger-icon" onClick={() => { if (window.confirm('Удалить модуль целиком вместе с уроками?')) removeModule(module.id); }}><Trash2 size={17} /></button></div>
                 </header>
-                <div className="editor-lesson-list" onDragOver={(event) => { allowEditorDrop(event, 'lesson'); }} onDrop={(event) => { if (event.target === event.currentTarget && allowEditorDrop(event, 'lesson')) { event.stopPropagation(); dropLessonToModuleEnd(module.id); } }}>
+                <div data-editor-drop-kind="lesson-container" data-module-id={module.id} className={`editor-lesson-list ${dropTarget?.kind === 'lesson' && dropTarget.moduleId === module.id && dropTarget.edge === 'end' ? 'is-drop-end-target' : ''}`}>
                   {module.lessons.map((lesson, lessonIndex) => (
-                    <article className={`editor-lesson ${collapsedLessons.has(lesson.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'lesson' && dragItem.lessonId === lesson.id ? 'is-dragging' : ''}`} key={lesson.id} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } else { allowEditorDrop(event, 'lesson'); } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); return; } if (allowEditorDrop(event, 'lesson')) { event.stopPropagation(); dropLesson(module.id, lesson.id); } }}>
+                    <article data-editor-drop-kind="lesson" data-module-id={module.id} data-lesson-id={lesson.id} className={`editor-lesson ${collapsedLessons.has(lesson.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'lesson' && dragItem.lessonId === lesson.id ? 'is-dragging' : ''} ${dropTarget?.kind === 'lesson' && dropTarget.lessonId === lesson.id ? `is-drop-target is-drop-${dropTarget.edge}` : ''}`} key={lesson.id} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); } }}>
                       <div className="editor-lesson__head">
-                        <span className="editor-drag-handle" role="button" tabIndex={0} draggable onDragStart={(event) => beginEditorDrag(event, { kind: 'lesson', moduleId: module.id, lessonId: lesson.id })} onDragEnd={endEditorDrag} title="Перетащить урок" aria-label="Перетащить урок"><GripVertical size={17}/></span>
+                        <span className="editor-drag-handle" role="button" tabIndex={0} onPointerDown={(event) => beginPointerDrag(event, { kind: 'lesson', moduleId: module.id, lessonId: lesson.id })} onPointerMove={movePointerDrag} onPointerUp={finishPointerDrag} onPointerCancel={cancelPointerDrag} title="Зажмите и перетащите урок" aria-label="Перетащить урок"><GripVertical size={17}/></span>
                         <span>{moduleIndex + 1}.{lessonIndex + 1}</span>
                         <input value={lesson.title} onChange={(event) => updateLesson(module.id, lesson.id, { title: event.target.value })} />
                         <select value={lesson.type} onChange={(event) => updateLesson(module.id, lesson.id, { type: event.target.value as Lesson['type'] })}><option value="text">Текстовый урок</option><option value="video">Видеоурок</option><option value="practice">Практика</option><option value="test">Тест</option><option value="assignment">Домашнее задание</option><option value="conference">Видеоконференция</option></select>
@@ -550,10 +697,10 @@ export function CourseEditorPage() {
                         <button onClick={() => pasteBlock(module.id, lesson)}><ClipboardPaste size={15}/> Вставить блок</button>
                       </div>
 
-                      <div className="lesson-block-editor-list" onDragOver={(event) => { allowEditorDrop(event, 'block'); }} onDrop={(event) => { if (event.target === event.currentTarget && allowEditorDrop(event, 'block')) { event.stopPropagation(); dropBlockToLessonEnd(module.id, lesson.id); } }}>
+                      <div data-editor-drop-kind="block-container" data-module-id={module.id} data-lesson-id={lesson.id} className={`lesson-block-editor-list ${dropTarget?.kind === 'block' && dropTarget.moduleId === module.id && dropTarget.lessonId === lesson.id && dropTarget.edge === 'end' ? 'is-drop-end-target' : ''}`}>
                         {lesson.blocks.map((block, blockIndex) => (
-                          <div className={`lesson-block-editor ${collapsedBlocks.has(block.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'block' && dragItem.blockId === block.id ? 'is-dragging' : ''}`} key={block.id} onDragOver={(event) => { allowEditorDrop(event, 'block'); }} onDrop={(event) => { if (allowEditorDrop(event, 'block')) { event.stopPropagation(); dropBlock(module.id, lesson.id, block.id); } }}>
-                            <div className="lesson-block-editor__title"><div className="lesson-block-editor__label"><span className="editor-drag-handle editor-drag-handle--small" role="button" tabIndex={0} draggable onDragStart={(event) => beginEditorDrag(event, { kind: 'block', moduleId: module.id, lessonId: lesson.id, blockId: block.id })} onDragEnd={endEditorDrag} title="Перетащить блок" aria-label="Перетащить блок"><GripVertical size={15}/></span><span>{blockIndex + 1}. {blockLabels[block.type]}</span></div><div><button onClick={() => moveBlock(module.id, lesson, block.id, -1)} disabled={blockIndex === 0} title="Блок выше"><ArrowUp size={14}/></button><button onClick={() => moveBlock(module.id, lesson, block.id, 1)} disabled={blockIndex === lesson.blocks.length - 1} title="Блок ниже"><ArrowDown size={14}/></button><button onClick={() => copyEditorItem({ kind: 'block', data: block })} title="Копировать блок"><Copy size={14}/></button><button onClick={() => toggleSet(setCollapsedBlocks, block.id)} title={collapsedBlocks.has(block.id) ? 'Развернуть блок' : 'Свернуть блок'}>{collapsedBlocks.has(block.id) ? <ChevronDown size={15}/> : <ChevronUp size={15}/>}</button><button onClick={() => removeBlock(module.id, lesson, block.id)}><Trash2 size={15} /></button></div></div>
+                          <div data-editor-drop-kind="block" data-module-id={module.id} data-lesson-id={lesson.id} data-block-id={block.id} className={`lesson-block-editor ${collapsedBlocks.has(block.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'block' && dragItem.blockId === block.id ? 'is-dragging' : ''} ${dropTarget?.kind === 'block' && dropTarget.blockId === block.id ? `is-drop-target is-drop-${dropTarget.edge}` : ''}`} key={block.id}>
+                            <div className="lesson-block-editor__title"><div className="lesson-block-editor__label"><span className="editor-drag-handle editor-drag-handle--small" role="button" tabIndex={0} onPointerDown={(event) => beginPointerDrag(event, { kind: 'block', moduleId: module.id, lessonId: lesson.id, blockId: block.id })} onPointerMove={movePointerDrag} onPointerUp={finishPointerDrag} onPointerCancel={cancelPointerDrag} title="Зажмите и перетащите блок" aria-label="Перетащить блок"><GripVertical size={15}/></span><span>{blockIndex + 1}. {blockLabels[block.type]}</span></div><div><button onClick={() => moveBlock(module.id, lesson, block.id, -1)} disabled={blockIndex === 0} title="Блок выше"><ArrowUp size={14}/></button><button onClick={() => moveBlock(module.id, lesson, block.id, 1)} disabled={blockIndex === lesson.blocks.length - 1} title="Блок ниже"><ArrowDown size={14}/></button><button onClick={() => copyEditorItem({ kind: 'block', data: block })} title="Копировать блок"><Copy size={14}/></button><button onClick={() => toggleSet(setCollapsedBlocks, block.id)} title={collapsedBlocks.has(block.id) ? 'Развернуть блок' : 'Свернуть блок'}>{collapsedBlocks.has(block.id) ? <ChevronDown size={15}/> : <ChevronUp size={15}/>}</button><button onClick={() => removeBlock(module.id, lesson, block.id)}><Trash2 size={15} /></button></div></div>
                             <div className="lesson-block-editor__body"><BlockEditor moduleId={module.id} lesson={lesson} block={block} updateBlock={updateBlock} updateTest={updateTest} addQuestion={addQuestion} updateQuestion={updateQuestion} /></div>
                           </div>
                         ))}

@@ -192,9 +192,14 @@ Voice features depend on browser Web Speech support. Chrome/Edge/Yandex Browser 
 - В таблице пользователей администратора работает меню «…»: карточка, смена роли, блокировка/разблокировка и сброс пароля.
 - Исправлена раскладка статусов в блоке резервного копирования.
 
-## Revision 6.0.0
+## Revision 7.0.0
 
 - Text-to-speech buttons now toggle to a red stop-square only on the active text fragment and restore automatically when speech ends or is stopped.
 - Lesson text selection expands to whole-word boundaries and the translation popup opens near the pointer, stays inside the viewport and can be dragged by its header.
 - Course editor drag-and-drop uses dedicated draggable handles plus a synchronous drag reference, fixing module/lesson/block drops while preserving file drops.
 - Admin backup status area is now a simple row list instead of a grid; long labels and statuses remain inside the block.
+
+
+## V7 — перенос структуры курса
+
+Внутреннее перетаскивание модулей, уроков и контентных блоков переведено с нативного HTML5 Drag & Drop на Pointer Events. Это обеспечивает стабильное перемещение в Chrome/Edge/Safari, в том числе между модулями и уроками. Во время переноса показывается точная линия вставки; поддерживается автопрокрутка длинной программы. Стрелки вверх/вниз сохранены как альтернативный способ сортировки.
