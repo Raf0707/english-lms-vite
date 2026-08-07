@@ -34,7 +34,8 @@ export function LessonPage() {
   const articleRef = useRef<HTMLElement | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [videoPlayed, setVideoPlayed] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const [selectedSpeechText, setSelectedSpeechText] = useState('');
+  const [speakingKey, setSpeakingKey] = useState<string | null>(null);
   const course = courses.find((item) => item.id === courseId);
   const enrollment = useAppStore((state) => state.enrollments.find((item) => item.courseId === courseId));
   const completeLesson = useAppStore((state) => state.completeLesson);
@@ -48,53 +49,46 @@ export function LessonPage() {
   const videoBlock = current?.lesson.blocks.find((block) => block.type === 'video');
   const hasTestBlock = current?.lesson.blocks.some((block) => block.type === 'test');
 
-  const lessonSpeechText = useMemo(() => {
-    if (!current) return '';
-    const parts = [current.lesson.title];
-    current.lesson.blocks.forEach((block) => {
-      if (block.title) parts.push(block.title);
-      if (block.content) parts.push(block.content);
-      if (block.table) {
-        parts.push(block.table.headers.join('. '));
-        block.table.rows.forEach((row) => parts.push(row.join('. ')));
-      }
-      if (block.assignment) {
-        parts.push(block.assignment.title, block.assignment.instructions);
-      }
-    });
-    return parts.filter(Boolean).join('. ');
-  }, [current]);
-
   useEffect(() => {
+    setSpeakingKey(null);
     return () => {
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     };
   }, [current?.lesson.id]);
 
-  const toggleSpeech = () => {
+  const speakText = (text: string, key: string) => {
+    const clean = text.trim();
+    if (!clean) return;
     if (!('speechSynthesis' in window)) {
       addToast({ title: 'Озвучивание недоступно', text: 'Ваш браузер не поддерживает Web Speech API.', tone: 'warning' });
       return;
     }
-    if (speaking) {
+    if (speakingKey === key) {
       window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
-    if (!lessonSpeechText.trim()) {
-      addToast({ title: 'Нет текста для озвучивания', tone: 'warning' });
+      setSpeakingKey(null);
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(lessonSpeechText);
-    const cyrillic = (lessonSpeechText.match(/[А-Яа-яЁё]/g) ?? []).length;
-    const latin = (lessonSpeechText.match(/[A-Za-z]/g) ?? []).length;
+    const utterance = new SpeechSynthesisUtterance(clean);
+    const cyrillic = (clean.match(/[А-Яа-яЁё]/g) ?? []).length;
+    const latin = (clean.match(/[A-Za-z]/g) ?? []).length;
     utterance.lang = latin > cyrillic ? 'en-US' : 'ru-RU';
     utterance.rate = 0.95;
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    setSpeaking(true);
+    utterance.onend = () => setSpeakingKey((current) => current === key ? null : current);
+    utterance.onerror = () => setSpeakingKey((current) => current === key ? null : current);
+    setSpeakingKey(key);
     window.speechSynthesis.speak(utterance);
+  };
+
+  const captureSelectedText = () => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() ?? '';
+    const anchor = selection?.anchorNode;
+    if (!text || !anchor || !articleRef.current?.contains(anchor)) {
+      setSelectedSpeechText('');
+      return;
+    }
+    setSelectedSpeechText(text.slice(0, 1200));
   };
 
   if (!course || !current || !enrollment) {
@@ -103,8 +97,8 @@ export function LessonPage() {
 
   const completed = enrollment.completedLessonIds.includes(current.lesson.id);
   const handleComplete = () => {
+    if (completed) return;
     completeLesson(course.id, current.lesson.id);
-    if (next) navigate(`/app/course/${course.id}/lesson/${next.lesson.id}`);
   };
 
   return (
@@ -158,11 +152,12 @@ export function LessonPage() {
             </div>
           </header>
 
-          <article ref={articleRef} className="lesson-article">
+          <article ref={articleRef} className="lesson-article" onMouseUp={captureSelectedText} onKeyUp={captureSelectedText}>
             <div className="lesson-article__heading">
-              <div className="lesson-heading-meta"><div><Badge tone="green">{current.lesson.type === 'video' ? 'Видеоурок' : current.lesson.type === 'test' ? 'Тест' : 'Материал'}</Badge><span><Clock3 size={15} /> {current.lesson.duration} минут</span></div><Button size="sm" variant="secondary" icon={speaking ? <Square size={15}/> : <Volume2 size={16}/>} onClick={toggleSpeech}>{speaking ? 'Остановить' : 'Озвучить урок'}</Button></div>
+              <div className="lesson-heading-meta"><div><Badge tone="green">{current.lesson.type === 'video' ? 'Видеоурок' : current.lesson.type === 'test' ? 'Тест' : 'Материал'}</Badge><span><Clock3 size={15} /> {current.lesson.duration} минут</span></div></div>
               <h1>{current.lesson.title}</h1>
-              <p>Выделяйте английские слова в тексте — перевод можно сразу сохранить в личный словарь.</p>
+              <p>Выделяйте английские слова в тексте — перевод можно сразу сохранить в личный словарь. Любой выделенный фрагмент можно озвучить отдельно.</p>
+              {selectedSpeechText ? <div className="lesson-selection-speech"><span>Выделено: {selectedSpeechText.length > 90 ? `${selectedSpeechText.slice(0, 90)}…` : selectedSpeechText}</span><button type="button" className={`lesson-selection-speak-icon ${speakingKey === 'selection' ? 'is-speaking' : ''}`} onClick={() => speakText(selectedSpeechText, 'selection')} title={speakingKey === 'selection' ? 'Остановить озвучивание' : 'Озвучить выделенный текст'} aria-label={speakingKey === 'selection' ? 'Остановить озвучивание' : 'Озвучить выделенный текст'}>{speakingKey === 'selection' ? <Square size={14} fill="currentColor"/> : <Volume2 size={17}/>}</button></div> : null}
             </div>
 
             {current.lesson.type === 'video' ? (
@@ -185,10 +180,10 @@ export function LessonPage() {
             ) : (
               <div className="lesson-blocks">
                 {current.lesson.blocks.map((block) => {
-                  if (block.type === 'heading') return <h2 key={block.id}>{block.title}</h2>;
-                  if (block.type === 'text') return <LessonTextBlock key={block.id} block={block}/>;
-                  if (block.type === 'quote') return <blockquote key={block.id}>{block.content}</blockquote>;
-                  if (block.type === 'callout') return <div className="lesson-callout" key={block.id}><Volume2 size={21} /><div><strong>{block.title}</strong><p>{block.content}</p></div></div>;
+                  if (block.type === 'heading') return <div className="lesson-speakable lesson-speakable--heading" key={block.id}><h2>{block.title}</h2><SpeakTextButton text={block.title ?? ''} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
+                  if (block.type === 'text') return <div className="lesson-speakable" key={block.id}><LessonTextBlock block={block}/><SpeakTextButton text={block.content ?? ''} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
+                  if (block.type === 'quote') return <div className="lesson-speakable" key={block.id}><blockquote>{block.content}</blockquote><SpeakTextButton text={block.content ?? ''} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
+                  if (block.type === 'callout') return <div className="lesson-speakable" key={block.id}><div className="lesson-callout"><Volume2 size={21} /><div><strong>{block.title}</strong><p>{block.content}</p></div></div><SpeakTextButton text={`${block.title ?? ''}. ${block.content ?? ''}`} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
                   if (block.type === 'table' && block.table) return <div className="lesson-table-wrap" key={block.id}><table><thead><tr>{block.table.headers.map((header, index) => <th key={`${block.id}-h-${index}`}>{header}</th>)}</tr></thead><tbody>{block.table.rows.map((row, rowIndex) => <tr key={`${block.id}-r-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${block.id}-${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div>;
                   if (block.type === 'video') return block.url ? <div className="lesson-inline-video" key={block.id}><video controls src={block.url}/>{block.title ? <strong>{block.title}</strong> : null}</div> : null;
                   if (block.type === 'image') return block.url ? <figure className="lesson-inline-image" key={block.id}><img src={block.url} alt={block.title ?? ''}/>{block.title ? <figcaption>{block.title}</figcaption> : null}</figure> : null;
@@ -208,13 +203,17 @@ export function LessonPage() {
 
             <footer className="lesson-footer-actions">
               <div>
-                {completed ? <span className="lesson-completed"><Check size={18} /> Урок завершён</span> : <span><Circle size={17} /> После изучения отметьте урок завершённым</span>}
+                {completed
+                  ? <span className="lesson-completed"><Check size={18} /> Урок завершён</span>
+                  : current.lesson.test
+                    ? <span><Circle size={17} /> Урок завершится после успешного прохождения теста</span>
+                    : <span><Circle size={17} /> После изучения отметьте урок завершённым</span>}
               </div>
-              {current.lesson.test ? (
-                next ? <Button onClick={() => navigate(`/app/course/${course.id}/lesson/${next.lesson.id}`)} icon={<ChevronRight size={18} />}>Следующий урок</Button> : null
-              ) : (
-                <Button onClick={handleComplete} icon={next ? <ChevronRight size={18} /> : <Check size={18} />}>{completed ? (next ? 'Следующий урок' : 'Курс завершён') : (next ? 'Завершить и продолжить' : 'Завершить урок')}</Button>
-              )}
+              <div className="lesson-footer-actions__buttons">
+                {!completed && !current.lesson.test ? <Button onClick={handleComplete} icon={<Check size={18} />}>Отметить завершённым</Button> : null}
+                {completed && next ? <Button onClick={() => navigate(`/app/course/${course.id}/lesson/${next.lesson.id}`)} icon={<ChevronRight size={18} />}>Следующий урок</Button> : null}
+                {completed && !next ? <Button variant="secondary" disabled icon={<CheckCircle2 size={18}/>}>Курс завершён</Button> : null}
+              </div>
             </footer>
           </article>
           <DictionaryPopover courseId={course.id} lessonId={current.lesson.id} containerRef={articleRef} />
@@ -224,6 +223,12 @@ export function LessonPage() {
   );
 }
 
+
+function SpeakTextButton({ text, speechKey, speakingKey, onSpeak }: { text: string; speechKey: string; speakingKey: string | null; onSpeak: (text: string, key: string) => void }) {
+  if (!text.trim()) return null;
+  const active = speakingKey === speechKey;
+  return <button type="button" className={`lesson-speak-button ${active ? 'is-speaking' : ''}`} onClick={() => onSpeak(text, speechKey)} title={active ? 'Остановить озвучивание' : 'Озвучить этот текст'} aria-label={active ? 'Остановить озвучивание' : 'Озвучить этот текст'}>{active ? <Square size={14} fill="currentColor"/> : <Volume2 size={17}/>}</button>;
+}
 
 function LessonTextBlock({ block }: { block: LessonBlock }) {
   const style = block.textStyle ?? {};

@@ -8,6 +8,7 @@ import {
   Edit3,
   Eye,
   FileCheck2,
+  GraduationCap,
   MoreHorizontal,
   Plus,
   Trash2,
@@ -85,6 +86,7 @@ function CourseMenu({ course, compact = false }: { course: Course; compact?: boo
   const [open, setOpen] = useState(false);
   const upsertCourse = useAppStore((state) => state.upsertCourse);
   const setCourseStatus = useAppStore((state) => state.setCourseStatus);
+  const requestCourseDeletion = useAppStore((state) => state.requestCourseDeletion);
   const addToast = useAppStore((state) => state.addToast);
   const navigate = useNavigate();
 
@@ -111,6 +113,7 @@ function CourseMenu({ course, compact = false }: { course: Course; compact?: boo
       <Link to={`/course/${course.slug}`} onClick={() => setOpen(false)}><Eye size={15}/> Предпросмотр</Link>
       <button onClick={duplicate}><Copy size={15}/> Создать копию</button>
       <button onClick={() => { setCourseStatus(course.id, course.status === 'archived' ? 'draft' : 'archived'); setOpen(false); }}><Archive size={15}/> {course.status === 'archived' ? 'Вернуть в черновики' : 'В архив'}</button>
+      {course.deletionStatus === 'requested' ? <button className="course-delete-requested" disabled><Trash2 size={15}/> Удаление ожидает администратора</button> : <button className="course-menu-danger" onClick={() => { if (window.confirm(`Отправить администратору запрос на удаление курса «${course.title}»? Курс будет удалён только после подтверждения.`)) { requestCourseDeletion(course.id); setOpen(false); } }}><Trash2 size={15}/> Запросить удаление</button>}
     </div></> : null}
   </div>;
 }
@@ -120,13 +123,29 @@ function TeacherCourses({ courses }: { courses: Course[] }) {
 }
 
 function TeacherStudents() {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const courses = useAppStore((state) => state.courses);
+  const addToast = useAppStore((state) => state.addToast);
+  const navigate = useNavigate();
   const students = [
     ['Анна Воронцова','student@lingua.demo','Английский для жизни','28%','сегодня','АВ'],
     ['Михаил Кузнецов','m.k@example.com','Английский для жизни','64%','вчера','МК'],
     ['Ирина Петрова','irina@example.com','Английский для путешествий','82%','2 дня назад','ИП'],
     ['Дарья Смирнова','daria@example.com','Английский для жизни','41%','3 дня назад','ДС']
   ];
-  return <Card className="data-card"><header><div><h2>Ученики</h2><p>Прогресс и последняя активность по назначенным курсам.</p></div><Button variant="secondary">Экспорт CSV</Button></header><div className="data-table-wrap"><table><thead><tr><th>Ученик</th><th>Курс</th><th>Прогресс</th><th>Последняя активность</th><th></th></tr></thead><tbody>{students.map(([name,email,course,progress,last,avatar]) => <tr key={email}><td><div className="person-cell"><Avatar value={avatar} size="sm"/><span><strong>{name}</strong><small>{email}</small></span></div></td><td>{course}</td><td><div className="mini-progress"><span><i style={{width:progress}}/></span><strong>{progress}</strong></div></td><td>{last}</td><td><button><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></div></Card>;
+
+  const openCourse = (courseTitle: string) => {
+    const course = courses.find((item) => item.title === courseTitle);
+    setOpenMenu(null);
+    if (course) navigate(`/course/${course.slug}`);
+    else addToast({ title: 'Курс не найден', text: courseTitle, tone: 'warning' });
+  };
+
+  return <Card className="data-card teacher-students-card"><header><div><h2>Ученики</h2><p>Прогресс и последняя активность по назначенным курсам.</p></div><Button variant="secondary">Экспорт CSV</Button></header><div className="data-table-wrap"><table><thead><tr><th>Ученик</th><th>Курс</th><th>Прогресс</th><th>Последняя активность</th><th></th></tr></thead><tbody>{students.map(([name,email,course,progress,last,avatar]) => <tr key={email}><td><div className="person-cell"><Avatar value={avatar} size="sm"/><span><strong>{name}</strong><small>{email}</small></span></div></td><td>{course}</td><td><div className="mini-progress"><span><i style={{width:progress}}/></span><strong>{progress}</strong></div></td><td>{last}</td><td><div className="admin-user-actions"><button className="admin-user-actions__trigger" onClick={() => setOpenMenu((current) => current === email ? null : email)} aria-label={`Действия: ${name}`}><MoreHorizontal size={18}/></button>{openMenu === email ? <><button className="admin-user-actions__backdrop" onClick={() => setOpenMenu(null)} aria-label="Закрыть меню"/><div className="admin-user-actions__menu teacher-student-actions__menu"><button onClick={() => { window.alert(`${name}
+${email}
+Курс: ${course}
+Прогресс: ${progress}
+Последняя активность: ${last}`); setOpenMenu(null); }}><Eye size={16}/> Карточка ученика</button><button onClick={() => openCourse(course)}><GraduationCap size={16}/> Открыть курс</button><button onClick={() => { window.location.href = `mailto:${email}?subject=${encodeURIComponent(`Занятия на платформе Lingua`)}`; setOpenMenu(null); }}><Edit3 size={16}/> Написать ученику</button><button onClick={() => { addToast({ title: 'Прогресс ученика', text: `${name}: ${progress} по курсу «${course}»`, tone: 'info' }); setOpenMenu(null); }}><TrendingUp size={16}/> Показать прогресс</button></div></> : null}</div></td></tr>)}</tbody></table></div></Card>;
 }
 
 function TeacherReviewQueue({ submissions, courses }: { submissions: AssignmentSubmission[]; courses: Course[] }) {
@@ -245,6 +264,7 @@ function TeacherFinance() {
 }
 
 function CourseStatusBadge({ course }: { course: Course }) {
+  if (course.deletionStatus === 'requested') return <Badge tone="red">Удаление на модерации</Badge>;
   const status = course.status ?? 'draft';
   const label = status === 'published' ? 'Опубликован' : status === 'moderation' ? 'На модерации' : status === 'revision' ? 'На доработке' : status === 'archived' ? 'Архив' : 'Черновик';
   return <Badge tone={status === 'published' ? 'green' : status === 'moderation' ? 'amber' : status === 'revision' ? 'red' : 'neutral'}>{label}</Badge>;

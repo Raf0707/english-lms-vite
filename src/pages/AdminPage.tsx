@@ -26,7 +26,7 @@ import { StatCard } from '../components/StatCard';
 import { Avatar, Badge, Button, Card } from '../components/ui';
 import { demoUsers } from '../data/mock';
 import { useAppStore } from '../store/useAppStore';
-import type { Course } from '../types';
+import type { Course, User } from '../types';
 import { formatMoney, formatShortDate } from '../utils/format';
 
 export function AdminPage() {
@@ -86,29 +86,68 @@ function AdminOverview() {
 }
 
 function AdminUsers() {
+  type AdminUserRow = User & { status: 'active' | 'blocked' };
+  const addToast = useAppStore((state) => state.addToast);
   const [search, setSearch] = useState('');
-  const users = [
-    demoUsers.student,
-    demoUsers.teacher,
-    demoUsers.admin,
-    { id:'u4',name:'Михаил Кузнецов',email:'m.k@example.com',phone:'+7 999 345-67-89',role:'student' as const,avatar:'МК',timezone:'Europe/Moscow' },
-    { id:'u5',name:'Мария Белова',email:'maria.teacher@example.com',phone:'+7 999 456-78-90',role:'teacher' as const,avatar:'МБ',timezone:'Europe/Moscow' }
-  ];
-  const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email} ${user.phone}`.toLowerCase().includes(search.toLowerCase())), [search]);
-  return <Card className="data-card"><header><div><h2>Пользователи</h2><p>Роли, статусы и доступы. Поиск работает по имени, Email и телефону.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск"/></label><Button>Добавить пользователя</Button></div></header><div className="data-table-wrap"><table><thead><tr><th>Пользователь</th><th>Телефон</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th></th></tr></thead><tbody>{filtered.map((user,index)=><tr key={user.id}><td><div className="person-cell"><Avatar value={user.avatar??'U'} size="sm"/><span><strong>{user.name}</strong><small>{user.email}</small></span></div></td><td>{user.phone}</td><td><Badge tone={user.role==='admin'?'red':user.role==='teacher'?'violet':'neutral'}>{user.role==='admin'?'Администратор':user.role==='teacher'?'Преподаватель':'Ученик'}</Badge></td><td><Badge tone="green">Активен</Badge></td><td>{index===0?'сегодня, 20:14':index===1?'сегодня, 18:42':'вчера'}</td><td><button><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></div></Card>;
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [users, setUsers] = useState<AdminUserRow[]>(() => [
+    { ...demoUsers.student, status: 'active' },
+    { ...demoUsers.teacher, status: 'active' },
+    { ...demoUsers.admin, status: 'active' },
+    { id:'u4',name:'Михаил Кузнецов',email:'m.k@example.com',phone:'+7 999 345-67-89',role:'student',avatar:'МК',timezone:'Europe/Moscow', status:'active' },
+    { id:'u5',name:'Мария Белова',email:'maria.teacher@example.com',phone:'+7 999 456-78-90',role:'teacher',avatar:'МБ',timezone:'Europe/Moscow', status:'active' }
+  ]);
+  const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email} ${user.phone}`.toLowerCase().includes(search.toLowerCase())), [search, users]);
+
+  const toggleBlocked = (id: string) => {
+    setUsers((current) => current.map((user) => user.id === id ? { ...user, status: user.status === 'active' ? 'blocked' : 'active' } : user));
+    const target = users.find((user) => user.id === id);
+    if (target) addToast({ title: target.status === 'active' ? 'Пользователь заблокирован' : 'Пользователь разблокирован', text: target.name, tone: target.status === 'active' ? 'warning' : 'success' });
+    setOpenMenu(null);
+  };
+
+  const switchRole = (id: string) => {
+    setUsers((current) => current.map((user) => user.id === id && user.role !== 'admin' ? { ...user, role: user.role === 'teacher' ? 'student' : 'teacher' } : user));
+    const target = users.find((user) => user.id === id);
+    if (target?.role === 'admin') addToast({ title: 'Роль администратора защищена', text: 'Для изменения административных прав нужна отдельная процедура.', tone: 'warning' });
+    else if (target) addToast({ title: 'Роль изменена', text: `${target.name}: ${target.role === 'teacher' ? 'ученик' : 'преподаватель'}`, tone: 'success' });
+    setOpenMenu(null);
+  };
+
+  return <Card className="data-card admin-users-card"><header><div><h2>Пользователи</h2><p>Роли, статусы и доступы. Поиск работает по имени, Email и телефону.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск"/></label><Button onClick={() => addToast({ title: 'Создание пользователя', text: 'В production здесь открывается форма нового пользователя.', tone: 'info' })}>Добавить пользователя</Button></div></header><div className="data-table-wrap"><table><thead><tr><th>Пользователь</th><th>Телефон</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th></th></tr></thead><tbody>{filtered.map((user,index)=><tr key={user.id}><td><div className="person-cell"><Avatar value={user.avatar??'U'} size="sm"/><span><strong>{user.name}</strong><small>{user.email}</small></span></div></td><td>{user.phone}</td><td><Badge tone={user.role==='admin'?'red':user.role==='teacher'?'violet':'neutral'}>{user.role==='admin'?'Администратор':user.role==='teacher'?'Преподаватель':'Ученик'}</Badge></td><td><Badge tone={user.status==='active'?'green':'red'}>{user.status==='active'?'Активен':'Заблокирован'}</Badge></td><td>{index===0?'сегодня, 20:14':index===1?'сегодня, 18:42':'вчера'}</td><td><div className="admin-user-actions"><button className="admin-user-actions__trigger" onClick={() => setOpenMenu((current) => current === user.id ? null : user.id)} aria-label={`Действия: ${user.name}`}><MoreHorizontal size={18}/></button>{openMenu===user.id?<><button className="admin-user-actions__backdrop" onClick={() => setOpenMenu(null)} aria-label="Закрыть меню"/><div className="admin-user-actions__menu"><button onClick={() => { window.alert(`${user.name}
+${user.email}
+${user.phone}
+Роль: ${user.role}
+Часовой пояс: ${user.timezone}`); setOpenMenu(null); }}><Eye size={16}/> Открыть карточку</button><button onClick={() => switchRole(user.id)} disabled={user.role==='admin'}><Users size={16}/> {user.role==='teacher'?'Сделать учеником':'Сделать преподавателем'}</button><button onClick={() => toggleBlocked(user.id)}><ShieldCheck size={16}/> {user.status==='active'?'Заблокировать':'Разблокировать'}</button><button onClick={() => { addToast({ title: 'Ссылка на сброс отправлена', text: user.email, tone: 'success' }); setOpenMenu(null); }}><RefreshCw size={16}/> Сбросить пароль</button></div></>:null}</div></td></tr>)}</tbody></table></div></Card>;
 }
 
 function AdminCourses() {
   const courses = useAppStore((state) => state.courses);
   const approveCourse = useAppStore((state) => state.approveCourse);
+  const deleteCourse = useAppStore((state) => state.deleteCourse);
+  const rejectCourseDeletion = useAppStore((state) => state.rejectCourseDeletion);
   const [search, setSearch] = useState('');
-  const filtered = useMemo(() => courses.filter((course) => `${course.title} ${course.instructor} ${course.category}`.toLowerCase().includes(search.toLowerCase())), [courses, search]);
-  return <Card className="data-card"><header><div><h2>Курсы</h2><p>Создание, редактирование, модерация, публикация и цены.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск курса"/></label><Link to="/admin/course/new"><Button>Создать курс</Button></Link></div></header><div className="data-table-wrap"><table><thead><tr><th>Курс</th><th>Автор</th><th>Статус</th><th>Цена</th><th>Ученики</th><th>Действия</th></tr></thead><tbody>{filtered.map((course)=><tr key={course.id}><td><div className="course-table-cell"><img src={course.cover} alt=""/><span><strong>{course.title}</strong><small>{course.level} · {course.category}</small>{course.moderationComment ? <small className="course-row-comment">{course.moderationComment}</small> : null}</span></div></td><td>{course.instructor}</td><td><AdminCourseStatus course={course}/></td><td>{formatMoney(course.price)}</td><td>{course.students}</td><td><div className="table-actions">{course.status==='moderation'?<Button size="sm" onClick={()=>approveCourse(course.id)}>Опубликовать</Button>:null}<Link to={`/admin/course/${course.id}/edit`}><Button size="sm" variant="secondary">Редактировать</Button></Link></div></td></tr>)}</tbody></table></div></Card>;
+  const filtered = useMemo(() => courses.filter((course) => `${course.title} ${course.instructor} ${course.category} ${course.level}`.toLowerCase().includes(search.toLowerCase())), [courses, search]);
+  const confirmDelete = (course: Course) => {
+    if (window.confirm(`Удалить курс «${course.title}» без возможности восстановления? Будут также удалены связанные демо-зачисления, занятия и отправленные задания.`)) deleteCourse(course.id);
+  };
+  return <Card className="data-card"><header><div><h2>Курсы</h2><p>Создание, редактирование, модерация, публикация, цены и подтверждение запросов на удаление.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск курса"/></label><Link to="/admin/course/new"><Button>Создать курс</Button></Link></div></header><div className="data-table-wrap"><table><thead><tr><th>Курс</th><th>Автор</th><th>Статус</th><th>Цена</th><th>Ученики</th><th>Действия</th></tr></thead><tbody>{filtered.map((course)=><tr key={course.id}><td><div className="course-table-cell"><img src={course.cover} alt=""/><span><strong>{course.title}</strong><small>{course.level} · {course.category}</small>{course.moderationComment ? <small className="course-row-comment">{course.moderationComment}</small> : null}{course.deletionStatus==='requested'?<small className="course-row-delete-request">Преподаватель запросил удаление курса</small>:null}</span></div></td><td>{course.instructor}</td><td>{course.deletionStatus==='requested'?<Badge tone="red">Запрос на удаление</Badge>:<AdminCourseStatus course={course}/>}</td><td>{formatMoney(course.price)}</td><td>{course.students}</td><td><div className="table-actions table-actions--wrap">{course.status==='moderation'&&course.deletionStatus!=='requested'?<Button size="sm" onClick={()=>approveCourse(course.id)}>Опубликовать</Button>:null}{course.deletionStatus==='requested'?<><Button size="sm" variant="danger" onClick={()=>confirmDelete(course)}>Подтвердить удаление</Button><Button size="sm" variant="secondary" onClick={()=>rejectCourseDeletion(course.id)}>Отклонить</Button></>:null}<Link to={`/admin/course/${course.id}/edit`}><Button size="sm" variant="secondary">Редактировать</Button></Link>{course.deletionStatus!=='requested'?<Button size="sm" variant="ghost" onClick={()=>confirmDelete(course)}>Удалить</Button>:null}</div></td></tr>)}</tbody></table></div></Card>;
 }
+
 
 function AdminCourseStatus({ course }: { course: Course }) {
   const status = course.status ?? 'draft';
-  return <Badge tone={status==='published'?'green':status==='moderation'?'amber':status==='revision'?'red':'neutral'}>{status==='published'?'Опубликован':status==='moderation'?'На модерации':status==='revision'?'На доработке':status==='archived'?'Архив':'Черновик'}</Badge>;
+  const label = status === 'published'
+    ? 'Опубликован'
+    : status === 'moderation'
+      ? 'На модерации'
+      : status === 'revision'
+        ? 'На доработке'
+        : status === 'archived'
+          ? 'Архив'
+          : 'Черновик';
+  const tone = status === 'published' ? 'green' : status === 'moderation' ? 'amber' : status === 'revision' ? 'red' : 'neutral';
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 function AdminPayments() {

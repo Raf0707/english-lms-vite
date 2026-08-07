@@ -18,7 +18,7 @@ export function CatalogPage() {
 
   const filtered = useMemo(() => {
     const data = courses.filter((course) => {
-      const matchesSearch = `${course.title} ${course.shortDescription} ${course.tags.join(' ')}`
+      const matchesSearch = `${course.title} ${course.shortDescription} ${course.level} ${course.category} ${course.instructor} ${course.tags.join(' ')}`
         .toLowerCase()
         .includes(search.toLowerCase());
       const matchesLevel = level === 'Все уровни' || course.level === level;
@@ -49,7 +49,7 @@ export function CatalogPage() {
             <div className="catalog-toolbar">
               <label className="catalog-search">
                 <Search size={19} />
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, тема или навык" />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, уровень, направление, категория или навык" />
               </label>
               <label>
                 <span>Уровень</span>

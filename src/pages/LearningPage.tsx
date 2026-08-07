@@ -57,7 +57,7 @@ export function LearningPage() {
             </Card>
           );
         })}
-        {!visible.length ? <Card className="learning-search-empty"><Search size={26}/><h3>Курсы не найдены</h3><p>Измените поисковый запрос или выберите другой фильтр.</p><Button size="sm" variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>Сбросить поиск</Button></Card> : null}
+        {!visible.length ? <Card className="learning-search-empty"><div className="learning-search-empty__title"><Search size={26}/><h3>Курсы не найдены</h3></div><p>Измените поисковый запрос или выберите другой фильтр.</p><Button size="sm" variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>Сбросить поиск</Button></Card> : null}
       </div>
       <Card className="learning-discover"><div><span className="eyebrow">Новый навык</span><h2>Добавьте ещё одно направление</h2><p>Курсы по путешествиям, разговорной практике и грамматике.</p></div><Link to="/catalog"><Button variant="secondary">Открыть каталог</Button></Link></Card>
     </AppLayout>

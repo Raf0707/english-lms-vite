@@ -105,12 +105,13 @@ export function AppSidebar() {
         </nav>
         <div className="app-sidebar__bottom">
           {user.role === 'student' ? (
-            <div className="sidebar-streak">
-              <span>🔥</span>
+            <div className="sidebar-streak" title="7 дней подряд">
+              <span className="sidebar-streak__fire">🔥</span>
               <div>
                 <strong>7 дней подряд</strong>
                 <small>Ещё один короткий урок сегодня</small>
               </div>
+              <b className="sidebar-streak__count" aria-label="7 дней подряд">7</b>
             </div>
           ) : null}
           <button className="sidebar-support" onClick={openSupport} title={collapsed ? 'Поддержка' : undefined}>

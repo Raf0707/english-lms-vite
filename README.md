@@ -1,6 +1,20 @@
+## Версия 5.0.0
+
+Исправления V5:
+
+- исправлен runtime-crash вкладки «Администратор → Курсы» (`AdminCourseStatus`);
+- добавлен глобальный Error Boundary вместо белого экрана при неожиданной ошибке рендера;
+- озвучивание текстовых блоков и выделенного текста переведено на компактную иконку;
+- `app-content--wide` использует `max-width: none; padding: 10px;`;
+- отметка урока завершённым теперь остаётся на текущем уроке, обновляет прогресс и отдельно предлагает переход дальше;
+- усилены проверки `completeLesson` в Zustand;
+- переработана визуальная обратная связь drag-and-drop модулей, уроков и блоков, включая пустые области назначения;
+- заработало троеточие у учеников преподавателя;
+- в свёрнутой панели ученика остаётся огонёк серии с числом 7.
+
 # Lingua LMS — Vite + React + TypeScript
 
-**Версия frontend:** 2.0.0
+**Версия frontend:** 5.0.0
 
 Полноценный интерактивный frontend образовательной платформы для изучения английского языка, реализованный по техническому заданию.
 
@@ -161,3 +175,26 @@ The current archive includes the next refinement pass requested during review:
 - the visible keyboard shortcut badge was removed from global search.
 
 Voice features depend on browser Web Speech support. Chrome/Edge/Yandex Browser generally expose speech recognition; text-to-speech uses the voices installed by the browser/OS.
+
+## Изменения версии 4.0.0
+
+- Минимальный размер текста по всему интерфейсу повышен до 12 px.
+- Исправлено пустое состояние поиска в «Моём обучении» (`padding: 30px`, иконка и заголовок в одну строку).
+- В календарном расписании события показывают время и название; увеличены заголовок месяца и блок часового пояса.
+- Поиск каталога ищет одновременно по названию, уровню, категории/направлению, преподавателю и тегам.
+- Озвучивание всего урока удалено: доступно озвучивание каждого текстового блока и выделенного пользователем фрагмента.
+- Редактор урока поддерживает изображения, видео, аудиофайлы и запись новой аудиодорожки с микрофона через MediaRecorder.
+- Добавлены drag-and-drop материалов в урок с автоматическим определением формата, вставка файлов/текста из буфера обмена.
+- Модули, уроки и контентные блоки можно перемещать мышью за ручку или стрелками вверх/вниз.
+- Модули, уроки и блоки можно копировать и вставлять целиком.
+- Поле тегов сохраняет введённые запятые во время редактирования.
+- Преподаватель может запросить удаление своего курса; администратор подтверждает или отклоняет запрос. Администратор также может удалить курс напрямую.
+- В таблице пользователей администратора работает меню «…»: карточка, смена роли, блокировка/разблокировка и сброс пароля.
+- Исправлена раскладка статусов в блоке резервного копирования.
+
+## Revision 6.0.0
+
+- Text-to-speech buttons now toggle to a red stop-square only on the active text fragment and restore automatically when speech ends or is stopped.
+- Lesson text selection expands to whole-word boundaries and the translation popup opens near the pointer, stays inside the viewport and can be dragged by its header.
+- Course editor drag-and-drop uses dedicated draggable handles plus a synchronous drag reference, fixing module/lesson/block drops while preserving file drops.
+- Admin backup status area is now a simple row list instead of a grid; long labels and statuses remain inside the block.

@@ -124,6 +124,9 @@ export interface Course {
   modules: Module[];
   status?: CourseStatus;
   moderationComment?: string;
+  deletionStatus?: 'requested';
+  deletionRequestedBy?: string;
+  deletionRequestedAt?: string;
   schedule?: CourseScheduleItem[];
   createdAt?: string;
   updatedAt?: string;

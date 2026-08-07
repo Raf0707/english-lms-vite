@@ -160,7 +160,7 @@ export function SchedulePage() {
               <div className="full-calendar__grid">{calendarCells.map((cell, index) => {
                 const key = dateKeyInTimezone(cell.date, user.timezone);
                 const daySessions = filtered.filter((session) => dateKeyInTimezone(session.startAt, user.timezone) === key && session.status !== 'cancelled');
-                return <button key={`${key}-${index}`} className={`${cell.muted ? 'muted ' : ''}${key === todayKey ? 'today ' : ''}${key === selectedDay ? 'selected ' : ''}${daySessions.length ? 'has-session' : ''}`} onClick={() => { setSelectedDay(key); if (cell.muted) setCalendarMonth(cell.date); }}><span>{cell.day}</span>{daySessions.slice(0,3).map((session) => <i key={session.id} title={session.title}>{new Intl.DateTimeFormat('ru-RU', { timeZone: user.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date(session.startAt))}</i>)}{daySessions.length > 3 ? <em>+{daySessions.length - 3}</em> : null}</button>;
+                return <button key={`${key}-${index}`} className={`${cell.muted ? 'muted ' : ''}${key === todayKey ? 'today ' : ''}${key === selectedDay ? 'selected ' : ''}${daySessions.length ? 'has-session' : ''}`} onClick={() => { setSelectedDay(key); if (cell.muted) setCalendarMonth(cell.date); }}><span>{cell.day}</span>{daySessions.slice(0,3).map((session) => <i key={session.id} title={session.title}><b>{new Intl.DateTimeFormat('ru-RU', { timeZone: user.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date(session.startAt))}</b><span>{session.title}</span></i>)}{daySessions.length > 3 ? <em>+{daySessions.length - 3}</em> : null}</button>;
               })}</div>
             </Card>
           ) : null}

@@ -60,6 +60,9 @@ interface AppState {
   submitCourseForModeration: (courseId: string) => void;
   approveCourse: (courseId: string) => void;
   requestCourseRevision: (courseId: string, comment: string) => void;
+  requestCourseDeletion: (courseId: string) => void;
+  rejectCourseDeletion: (courseId: string) => void;
+  deleteCourse: (courseId: string) => void;
   addSession: (session: Omit<Session, 'id'>) => Session;
   updateSession: (sessionId: string, data: Partial<Omit<Session, 'id'>>) => void;
   removeSession: (sessionId: string) => void;
@@ -200,21 +203,29 @@ export const useAppStore = create<AppState>()(
         const course = get().courses.find((item) => item.id === courseId);
         if (!course) return;
         const allLessonIds = course.modules.flatMap((module) => module.lessons.map((lesson) => lesson.id));
+        if (!allLessonIds.includes(lessonId)) return;
+        const targetEnrollment = get().enrollments.find((item) => item.courseId === courseId);
+        if (!targetEnrollment) {
+          get().addToast({ title: 'Не удалось обновить прогресс', text: 'Зачисление на курс не найдено.', tone: 'warning' });
+          return;
+        }
+        if ((targetEnrollment.completedLessonIds ?? []).includes(lessonId)) return;
         set((state) => ({
           enrollments: state.enrollments.map((enrollment) => {
             if (enrollment.courseId !== courseId) return enrollment;
-            const completed = Array.from(new Set([...enrollment.completedLessonIds, lessonId]));
+            const completed = Array.from(new Set([...(enrollment.completedLessonIds ?? []), lessonId]))
+              .filter((id) => allLessonIds.includes(id));
             const currentIndex = allLessonIds.indexOf(lessonId);
             const nextLesson = allLessonIds[currentIndex + 1] ?? lessonId;
             return {
               ...enrollment,
               completedLessonIds: completed,
-              progress: allLessonIds.length ? Math.round((completed.length / allLessonIds.length) * 100) : 0,
+              progress: allLessonIds.length ? Math.min(100, Math.round((completed.length / allLessonIds.length) * 100)) : 0,
               lastLessonId: nextLesson
             };
           })
         }));
-        get().addToast({ title: 'Урок завершён', text: 'Прогресс курса обновлён.', tone: 'success' });
+        get().addToast({ title: 'Урок завершён', text: 'Прогресс курса обновлён. Можно перейти к следующему уроку.', tone: 'success' });
       },
       upsertCourse: (course) => {
         const now = new Date().toISOString();
@@ -282,6 +293,42 @@ export const useAppStore = create<AppState>()(
       requestCourseRevision: (courseId, comment) => {
         get().setCourseStatus(courseId, 'revision', comment);
         get().addToast({ title: 'Курс возвращён на доработку', text: comment || 'Добавлен комментарий администратора.', tone: 'warning' });
+      },
+      requestCourseDeletion: (courseId) => {
+        const currentUser = get().user;
+        set((state) => ({
+          courses: state.courses.map((course) => course.id === courseId ? {
+            ...course,
+            deletionStatus: 'requested',
+            deletionRequestedBy: currentUser?.id,
+            deletionRequestedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          } : course)
+        }));
+        get().addToast({ title: 'Запрос на удаление отправлен', text: 'Курс будет удалён после подтверждения администратором.', tone: 'warning' });
+      },
+      rejectCourseDeletion: (courseId) => {
+        set((state) => ({
+          courses: state.courses.map((course) => course.id === courseId ? {
+            ...course,
+            deletionStatus: undefined,
+            deletionRequestedBy: undefined,
+            deletionRequestedAt: undefined,
+            updatedAt: new Date().toISOString()
+          } : course)
+        }));
+        get().addToast({ title: 'Удаление курса отклонено', text: 'Курс остаётся доступным владельцу.', tone: 'info' });
+      },
+      deleteCourse: (courseId) => {
+        const course = get().courses.find((item) => item.id === courseId);
+        if (!course) return;
+        set((state) => ({
+          courses: state.courses.filter((item) => item.id !== courseId),
+          enrollments: state.enrollments.filter((item) => item.courseId !== courseId),
+          sessions: state.sessions.filter((item) => item.courseId !== courseId),
+          assignmentSubmissions: state.assignmentSubmissions.filter((item) => item.courseId !== courseId)
+        }));
+        get().addToast({ title: 'Курс удалён', text: course.title, tone: 'info' });
       },
       addSession: (session) => {
         const record: Session = { ...session, id: newId('session') };
