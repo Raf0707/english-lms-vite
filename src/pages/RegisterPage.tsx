@@ -3,6 +3,7 @@ import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import { Button, InputField } from '../components/ui';
+import { ApiError } from '../services/api';
 import { useAppStore } from '../store/useAppStore';
 
 export function RegisterPage() {
@@ -12,18 +13,26 @@ export function RegisterPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const register = useAppStore((state) => state.register);
   const navigate = useNavigate();
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (phone.replace(/\D/g, '').length < 10) return;
+    if (phone.replace(/\D/g, '').length < 10) {
+      setError('Проверьте номер телефона: должно быть не менее 10 цифр.');
+      return;
+    }
     setLoading(true);
-    window.setTimeout(() => {
-      register(name.trim(), email.trim(), phone.trim());
+    setError('');
+    try {
+      await register(name.trim(), email.trim(), phone.trim(), password);
+      navigate('/app/profile', { replace: true });
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : 'Не удалось создать аккаунт');
+    } finally {
       setLoading(false);
-      navigate('/app');
-    }, 700);
+    }
   };
 
   return (
@@ -37,7 +46,7 @@ export function RegisterPage() {
             <li><Check size={18} /> Бесплатные пробные уроки</li>
             <li><Check size={18} /> Личный словарь и интервальные повторения</li>
             <li><Check size={18} /> Индивидуальные и групповые занятия</li>
-            <li><Check size={18} /> Прогресс сохраняется между устройствами</li>
+            <li><Check size={18} /> Профиль и сессия сохраняются на backend</li>
           </ul>
         </div>
         <div className="auth-visual__decor auth-visual__decor--one" />
@@ -47,9 +56,10 @@ export function RegisterPage() {
         <div className="auth-form-wrap">
           <Logo />
           <div className="auth-heading"><h1>Создать аккаунт</h1><p>Телефон обязателен и может использоваться для входа.</p></div>
+          {error ? <div className="auth-server-error" role="alert">{error}</div> : null}
           <form className="auth-form" onSubmit={submit}>
             <InputField label="Имя и фамилия">
-              <div className="input-with-icon"><UserRound size={18} /><input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></div>
+              <div className="input-with-icon"><UserRound size={18} /><input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" placeholder="Анна Смирнова" required /></div>
             </InputField>
             <InputField label="Email">
               <div className="input-with-icon"><Mail size={18} /><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></div>

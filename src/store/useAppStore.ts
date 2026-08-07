@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   courses as seedCourses,
-  demoUsers,
   initialDictionary,
   instructors,
   notifications,
@@ -24,6 +23,8 @@ import type {
   User
 } from '../types';
 import { calculateSm2 } from '../utils/sm2';
+import { api, ApiError, type VerificationCodes } from '../services/api';
+import { backendUserToAppUser, splitPersonName } from '../services/auth';
 
 interface Toast {
   id: string;
@@ -32,8 +33,13 @@ interface Toast {
   tone?: 'success' | 'warning' | 'info';
 }
 
+export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'guest';
+
 interface AppState {
   user: User | null;
+  authStatus: AuthStatus;
+  authError: string | null;
+  pendingVerification: VerificationCodes | null;
   courses: Course[];
   enrollments: Enrollment[];
   dictionary: DictionaryEntry[];
@@ -45,11 +51,17 @@ interface AppState {
   toasts: Toast[];
   sidebarOpen: boolean;
   sidebarCollapsed: boolean;
-  loginAs: (role: Exclude<Role, 'guest'>) => void;
-  login: (identifier: string) => void;
-  register: (name: string, email: string, phone: string) => void;
-  updateProfile: (payload: Pick<User, 'name' | 'email' | 'phone' | 'timezone'>) => void;
-  logout: () => void;
+  bootstrapAuth: () => Promise<void>;
+  loginAs: (role: Exclude<Role, 'guest'>) => Promise<User>;
+  login: (identifier: string, password: string) => Promise<User>;
+  register: (name: string, email: string, phone: string, password: string, timezone?: string) => Promise<{ user: User; verification?: VerificationCodes }>;
+  updateProfile: (payload: Pick<User, 'name' | 'email' | 'phone' | 'timezone'>) => Promise<void>;
+  updateContacts: (payload: { email?: string; phone?: string; currentPassword: string }) => Promise<VerificationCodes | undefined>;
+  requestVerification: (channel: 'email' | 'phone') => Promise<string | undefined>;
+  confirmVerification: (channel: 'email' | 'phone', code: string) => Promise<void>;
+  forgotPassword: (login: string) => Promise<string | undefined>;
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
+  logout: () => Promise<void>;
   toggleSidebar: () => void;
   closeSidebar: () => void;
   toggleSidebarCollapsed: () => void;
@@ -106,12 +118,32 @@ const seededCourses: Course[] = seedCourses.map((course, index) => ({
   schedule: course.schedule ?? []
 }));
 
-const normalizePhone = (value: string) => value.replace(/\D/g, '');
+const devCredentials: Record<Exclude<Role, 'guest'>, { login: string; password: string }> = {
+  student: {
+    login: import.meta.env.VITE_DEV_STUDENT_LOGIN ?? 'student@example.local',
+    password: import.meta.env.VITE_DEV_STUDENT_PASSWORD ?? 'ChangeMe123!'
+  },
+  teacher: {
+    login: import.meta.env.VITE_DEV_TEACHER_LOGIN ?? 'teacher@example.local',
+    password: import.meta.env.VITE_DEV_TEACHER_PASSWORD ?? 'ChangeMe123!'
+  },
+  admin: {
+    login: import.meta.env.VITE_DEV_ADMIN_LOGIN ?? 'admin@example.local',
+    password: import.meta.env.VITE_DEV_ADMIN_PASSWORD ?? 'ChangeMe123!'
+  }
+};
+
+function apiMessage(error: unknown): string {
+  return error instanceof ApiError ? error.message : 'Не удалось выполнить запрос к серверу';
+}
 
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       user: null,
+      authStatus: 'idle',
+      authError: null,
+      pendingVerification: null,
       courses: seededCourses,
       enrollments: baseEnrollments,
       dictionary: initialDictionary,
@@ -123,48 +155,124 @@ export const useAppStore = create<AppState>()(
       toasts: [],
       sidebarOpen: false,
       sidebarCollapsed: false,
-      loginAs: (role) => {
-        set({ user: demoUsers[role], sidebarOpen: false });
-        get().addToast({ title: 'Вы вошли в демо-режим', text: `Роль: ${role}`, tone: 'success' });
-      },
-      login: (identifier) => {
-        const normalized = identifier.trim().toLowerCase();
-        const digits = normalizePhone(identifier);
-        const matched = (Object.values(demoUsers) as User[]).find(
-          (candidate) => candidate.email.toLowerCase() === normalized || normalizePhone(candidate.phone) === digits
-        );
-        const role: Exclude<Role, 'guest'> = matched?.role ?? (normalized.includes('admin') ? 'admin' : normalized.includes('teacher') ? 'teacher' : 'student');
-        const base = matched ?? demoUsers[role];
-        const isEmail = identifier.includes('@');
-        set({
-          user: {
-            ...base,
-            ...(isEmail ? { email: identifier.trim() } : { phone: identifier.trim() })
-          },
-          sidebarOpen: false
-        });
-        get().addToast({ title: 'Добро пожаловать!', text: 'Вход выполнен успешно.', tone: 'success' });
-      },
-      register: (name, email, phone) => {
-        set({
-          user: {
-            ...demoUsers.student,
-            id: newId('user'),
-            name,
-            email,
-            phone,
-            avatar: name
-              .split(' ')
-              .map((part) => part[0])
-              .slice(0, 2)
-              .join('')
-              .toUpperCase()
+      bootstrapAuth: async () => {
+        if (get().authStatus === 'loading') return;
+        set({ authStatus: 'loading', authError: null });
+        try {
+          const backendUser = await api.profile.me();
+          set({ user: backendUserToAppUser(backendUser), authStatus: 'authenticated', authError: null });
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 401) {
+            set({ user: null, authStatus: 'guest', authError: null });
+            return;
           }
-        });
-        get().addToast({ title: 'Аккаунт создан', text: 'Email и номер телефона сохранены в профиле.', tone: 'success' });
+          set({ user: null, authStatus: 'guest', authError: apiMessage(error) });
+        }
       },
-      updateProfile: (payload) => set((state) => ({ user: state.user ? { ...state.user, ...payload } : null })),
-      logout: () => set({ user: null, sidebarOpen: false }),
+      loginAs: async (role) => {
+        const credentials = devCredentials[role];
+        return get().login(credentials.login, credentials.password);
+      },
+      login: async (identifier, password) => {
+        set({ authStatus: 'loading', authError: null });
+        try {
+          await api.auth.login(identifier.trim(), password);
+          const fullUser = await api.profile.me();
+          const user = backendUserToAppUser(fullUser);
+          set({ user, authStatus: 'authenticated', authError: null, sidebarOpen: false });
+          get().addToast({ title: 'Добро пожаловать!', text: 'Вход выполнен через backend.', tone: 'success' });
+          return user;
+        } catch (error) {
+          const message = apiMessage(error);
+          set({ user: null, authStatus: 'guest', authError: message });
+          throw error;
+        }
+      },
+      register: async (name, email, phone, password, timezone) => {
+        const person = splitPersonName(name);
+        if (!person.firstName) throw new Error('Введите имя');
+        set({ authStatus: 'loading', authError: null });
+        try {
+          const result = await api.auth.register({
+            firstName: person.firstName,
+            lastName: person.lastName,
+            email: email.trim(),
+            phone: phone.trim(),
+            password,
+            timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow'
+          });
+          const user = backendUserToAppUser(result.user);
+          set({
+            user,
+            authStatus: 'authenticated',
+            authError: null,
+            pendingVerification: result.verification ?? null,
+            sidebarOpen: false
+          });
+          get().addToast({ title: 'Аккаунт создан', text: 'Данные сохранены в PostgreSQL, сессия создана в Redis.', tone: 'success' });
+          return { user, verification: result.verification };
+        } catch (error) {
+          const message = apiMessage(error);
+          set({ user: null, authStatus: 'guest', authError: message });
+          throw error;
+        }
+      },
+      updateProfile: async (payload) => {
+        const person = splitPersonName(payload.name);
+        await api.profile.update({
+          firstName: person.firstName,
+          lastName: person.lastName,
+          displayName: person.displayName,
+          timezone: payload.timezone,
+          locale: 'ru'
+        });
+        const fullUser = await api.profile.me();
+        set({ user: backendUserToAppUser(fullUser), authStatus: 'authenticated' });
+      },
+      updateContacts: async (payload) => {
+        const result = await api.auth.updateContacts(payload);
+        const user = backendUserToAppUser(result.user);
+        set({ user, authStatus: 'authenticated', pendingVerification: result.verification ?? null });
+        return result.verification;
+      },
+      requestVerification: async (channel) => {
+        const result = await api.auth.requestVerification(channel);
+        set((state) => ({
+          pendingVerification: {
+            ...(state.pendingVerification ?? {}),
+            ...(channel === 'email' ? { emailCode: result.code } : { phoneCode: result.code })
+          }
+        }));
+        return result.code;
+      },
+      confirmVerification: async (channel, code) => {
+        await api.auth.confirmVerification(channel, code);
+        const fullUser = await api.profile.me();
+        set((state) => ({
+          user: backendUserToAppUser(fullUser),
+          authStatus: 'authenticated',
+          pendingVerification: state.pendingVerification
+            ? { ...state.pendingVerification, ...(channel === 'email' ? { emailCode: undefined } : { phoneCode: undefined }) }
+            : null
+        }));
+      },
+      forgotPassword: async (login) => {
+        const result = await api.auth.forgotPassword(login);
+        return result.token;
+      },
+      resetPassword: async (token, newPassword) => {
+        await api.auth.resetPassword(token, newPassword);
+        set({ user: null, authStatus: 'guest', pendingVerification: null });
+      },
+      logout: async () => {
+        try {
+          await api.auth.logout();
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 401)) throw error;
+        } finally {
+          set({ user: null, authStatus: 'guest', authError: null, pendingVerification: null, sidebarOpen: false });
+        }
+      },
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       closeSidebar: () => set({ sidebarOpen: false }),
       toggleSidebarCollapsed: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -451,6 +559,9 @@ export const useAppStore = create<AppState>()(
       dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })),
       resetDemo: () => set({
         user: null,
+        authStatus: 'guest',
+        authError: null,
+        pendingVerification: null,
         courses: seededCourses,
         enrollments: baseEnrollments,
         dictionary: initialDictionary,
@@ -465,9 +576,8 @@ export const useAppStore = create<AppState>()(
       })
     }),
     {
-      name: 'lingua-lms-demo-v2',
+      name: 'lingua-lms-v8',
       partialize: (state) => ({
-        user: state.user,
         courses: state.courses,
         enrollments: state.enrollments,
         dictionary: state.dictionary,

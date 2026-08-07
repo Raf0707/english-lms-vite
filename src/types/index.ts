@@ -11,6 +11,12 @@ export interface User {
   avatar?: string;
   level?: string;
   timezone: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
+  backendRoles?: string[];
 }
 
 export interface TableBlockData {

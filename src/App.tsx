@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AuthBootstrap } from './components/AuthBootstrap';
 import { Toasts } from './components/Toasts';
 import { AdminPage } from './pages/AdminPage';
 import { CatalogPage } from './pages/CatalogPage';
@@ -23,7 +24,8 @@ import { VideoRoomPage } from './pages/VideoRoomPage';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <AuthBootstrap>
+      <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/catalog" element={<CatalogPage />} />
@@ -51,6 +53,7 @@ export default function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       <Toasts />
-    </BrowserRouter>
+      </BrowserRouter>
+    </AuthBootstrap>
   );
 }

@@ -117,10 +117,14 @@ export function SchedulePage() {
   const sessionDates = new Set(filtered.filter((session) => session.status !== 'cancelled').map((session) => dateKeyInTimezone(session.startAt, user.timezone)));
   const todayKey = dateKeyInTimezone(new Date(), user.timezone);
 
-  const saveTimezone = () => {
-    updateProfile({ name: user.name, email: user.email, phone: user.phone, timezone: draftTimezone });
-    setTimezoneOpen(false);
-    addToast({ title: 'Часовой пояс изменён', text: 'Время занятий пересчитано автоматически.', tone: 'success' });
+  const saveTimezone = async () => {
+    try {
+      await updateProfile({ name: user.name, email: user.email, phone: user.phone, timezone: draftTimezone });
+      setTimezoneOpen(false);
+      addToast({ title: 'Часовой пояс изменён', text: 'Профиль сохранён на backend, время занятий пересчитано автоматически.', tone: 'success' });
+    } catch {
+      addToast({ title: 'Не удалось изменить часовой пояс', text: 'Проверьте соединение с backend.', tone: 'warning' });
+    }
   };
 
   const exportCalendar = () => {
@@ -205,7 +209,7 @@ export function SchedulePage() {
         </aside>
       </div>
 
-      <Modal open={timezoneOpen} onClose={() => setTimezoneOpen(false)} title="Часовой пояс" actions={<><Button variant="secondary" onClick={() => setTimezoneOpen(false)}>Отмена</Button><Button onClick={saveTimezone}>Сохранить</Button></>}>
+      <Modal open={timezoneOpen} onClose={() => setTimezoneOpen(false)} title="Часовой пояс" actions={<><Button variant="secondary" onClick={() => setTimezoneOpen(false)}>Отмена</Button><Button onClick={() => void saveTimezone()}>Сохранить</Button></>}>
         <div className="timezone-modal"><p>Все занятия хранятся как абсолютное время и автоматически отображаются в выбранном часовом поясе.</p><label><span>Часовой пояс</span><select value={draftTimezone} onChange={(event) => setDraftTimezone(event.target.value)}>{timezones.map(([value, label]) => <option value={value} key={value}>{label} · {value}</option>)}</select></label><div className="timezone-preview"><Clock3 size={18}/><div><small>Текущее локальное время</small><strong>{new Intl.DateTimeFormat('ru-RU', { timeZone: draftTimezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}</strong></div></div></div>
       </Modal>
     </AppLayout>

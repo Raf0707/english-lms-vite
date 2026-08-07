@@ -93,7 +93,7 @@ npm test
 Скопируйте `.env.example` в `.env`:
 
 ```env
-VITE_API_URL=http://localhost:4000/api
+VITE_API_URL=http://localhost:4000/api/v1
 VITE_LIVEKIT_URL=wss://video.example.com
 VITE_APP_NAME=Lingua
 ```
@@ -203,3 +203,11 @@ Voice features depend on browser Web Speech support. Chrome/Edge/Yandex Browser 
 ## V7 — перенос структуры курса
 
 Внутреннее перетаскивание модулей, уроков и контентных блоков переведено с нативного HTML5 Drag & Drop на Pointer Events. Это обеспечивает стабильное перемещение в Chrome/Edge/Safari, в том числе между модулями и уроками. Во время переноса показывается точная линия вставки; поддерживается автопрокрутка длинной программы. Стрелки вверх/вниз сохранены как альтернативный способ сортировки.
+
+---
+
+## V8: real backend connection
+
+Authentication and profile are no longer demo-only. See `docs/BACKEND_INTEGRATION.md`.
+
+Use the separate NestJS backend V1.4+ and set `VITE_API_URL=http://localhost:4000/api/v1`.
