@@ -1,4 +1,4 @@
-import { ArrowLeft, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
@@ -6,7 +6,7 @@ import { Button, InputField } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('student@lingua.demo');
+  const [identifier, setIdentifier] = useState('student@lingua.demo');
   const [password, setPassword] = useState('Demo123456');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -16,14 +16,21 @@ export function LoginPage() {
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from;
 
+  const roleDestination = (value: string) => {
+    const lower = value.toLowerCase();
+    const digits = value.replace(/\D/g, '');
+    if (lower.includes('admin') || digits.endsWith('0000001')) return '/admin';
+    if (lower.includes('teacher') || digits.endsWith('2223344')) return '/teacher';
+    return '/app';
+  };
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
     window.setTimeout(() => {
-      login(email);
+      login(identifier);
       setLoading(false);
-      const roleDestination = email.includes('admin') ? '/admin' : email.includes('teacher') ? '/teacher' : '/app';
-      navigate(from ?? roleDestination, { replace: true });
+      navigate(from ?? roleDestination(identifier), { replace: true });
     }, 650);
   };
 
@@ -40,7 +47,7 @@ export function LoginPage() {
           <span className="auth-quote">“</span>
           <h2>Небольшой урок сегодня — уверенная речь завтра.</h2>
           <p>Продолжайте с того места, где остановились. Прогресс, словарь и расписание уже ждут вас.</p>
-          <div className="auth-feature"><ShieldCheck size={19} /><span>Данные и учебный прогресс сохраняются безопасно</span></div>
+          <div className="auth-feature"><ShieldCheck size={19} /><span>Войти можно по Email или по номеру телефона</span></div>
         </div>
         <div className="auth-visual__decor auth-visual__decor--one" />
         <div className="auth-visual__decor auth-visual__decor--two" />
@@ -48,10 +55,10 @@ export function LoginPage() {
       <section className="auth-form-section">
         <div className="auth-form-wrap">
           <Logo />
-          <div className="auth-heading"><h1>С возвращением</h1><p>Войдите, чтобы продолжить обучение.</p></div>
+          <div className="auth-heading"><h1>С возвращением</h1><p>Введите Email или номер телефона.</p></div>
           <form className="auth-form" onSubmit={submit}>
-            <InputField label="Email">
-              <div className="input-with-icon"><Mail size={18} /><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
+            <InputField label="Email или номер телефона">
+              <div className="input-with-icon"><KeyRound size={18} /><input type="text" value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" placeholder="student@lingua.demo или +7 999..." required /></div>
             </InputField>
             <InputField label="Пароль">
               <div className="input-with-icon"><LockKeyhole size={18} /><input type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required /><button type="button" onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>

@@ -4,11 +4,11 @@ import { AppLayout } from '../components/AppLayout';
 import { ProgressRing } from '../components/ProgressRing';
 import { StatCard } from '../components/StatCard';
 import { Avatar, Badge, Button, Card } from '../components/ui';
-import { courses } from '../data/mock';
 import { useAppStore } from '../store/useAppStore';
 import { formatDate } from '../utils/format';
 
 export function DashboardPage() {
+  const courses = useAppStore((state) => state.courses);
   const user = useAppStore((state) => state.user)!;
   const enrollments = useAppStore((state) => state.enrollments);
   const dictionary = useAppStore((state) => state.dictionary);

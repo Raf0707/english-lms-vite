@@ -5,7 +5,10 @@ import {
   ChevronRight,
   Clock3,
   Headphones,
+  Hand,
   MessageCircle,
+  Mic,
+  PhoneOff,
   Play,
   Quote,
   ShieldCheck,
@@ -19,7 +22,7 @@ import { CourseCard } from '../components/CourseCard';
 import { PublicFooter } from '../components/PublicFooter';
 import { PublicHeader } from '../components/PublicHeader';
 import { Avatar, Badge, Button, Card } from '../components/ui';
-import { courses } from '../data/mock';
+import { useAppStore } from '../store/useAppStore';
 
 const method = [
   {
@@ -40,6 +43,7 @@ const method = [
 ];
 
 export function HomePage() {
+  const courses = useAppStore((state) => state.courses).filter((course) => course.status === 'published');
   return (
     <div className="public-page">
       <PublicHeader />
@@ -195,6 +199,7 @@ export function HomePage() {
                 <div><span><Users size={20} /></span><div><strong>Индивидуально и в группе</strong><p>Личные занятия, клубы и вебинары до 50 участников.</p></div></div>
                 <div><span><MessageCircle size={20} /></span><div><strong>Материалы и чат под рукой</strong><p>Экран, сообщения и история занятия связаны с курсом.</p></div></div>
               </div>
+              <div className="live-section__actions"><Link to="/teachers"><Button variant="secondary" icon={<Users size={17}/>}>Выбрать преподавателя</Button></Link></div>
             </div>
             <div className="video-room-preview">
               <div className="video-room-preview__header"><span>Conversation Club</span><small>00:24:18</small></div>
@@ -206,7 +211,7 @@ export function HomePage() {
                   </div>
                 ))}
               </div>
-              <div className="video-room-preview__controls"><span>🎙</span><span>🎥</span><span>✋</span><span>💬</span><span className="leave">↗</span></div>
+              <div className="video-room-preview__controls"><span title="Микрофон"><Mic size={17}/></span><span title="Камера"><Video size={17}/></span><span title="Поднять руку"><Hand size={17}/></span><span title="Чат"><MessageCircle size={17}/></span><span className="leave" title="Завершить"><PhoneOff size={17}/></span></div>
             </div>
           </div>
         </section>

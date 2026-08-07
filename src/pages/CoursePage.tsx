@@ -18,15 +18,19 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PublicFooter } from '../components/PublicFooter';
 import { PublicHeader } from '../components/PublicHeader';
 import { Avatar, Badge, Button, Card, Modal } from '../components/ui';
-import { courses } from '../data/mock';
 import { useAppStore } from '../store/useAppStore';
 import { formatMoney } from '../utils/format';
 
 export function CoursePage() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const course = useMemo(() => courses.find((item) => item.slug === slug), [slug]);
+  const courses = useAppStore((state) => state.courses);
   const user = useAppStore((state) => state.user);
+  const course = useMemo(() => courses.find((item) => item.slug === slug && (
+    item.status === 'published'
+    || user?.role === 'admin'
+    || (user?.role === 'teacher' && (item.ownerId === user.id || item.instructorId === user.id))
+  )), [courses, slug, user?.id, user?.role]);
   const enrollments = useAppStore((state) => state.enrollments);
   const purchase = useAppStore((state) => state.purchaseCourse);
   const [openModule, setOpenModule] = useState<string | null>(course?.modules[0]?.id ?? null);

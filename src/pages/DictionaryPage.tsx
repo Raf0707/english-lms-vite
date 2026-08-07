@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { EmptyState } from '../components/EmptyState';
 import { Badge, Button, Card, Modal } from '../components/ui';
-import { courses } from '../data/mock';
 import { useAppStore } from '../store/useAppStore';
 import type { DictionaryEntry } from '../types';
 import { formatDate } from '../utils/format';
@@ -18,6 +17,7 @@ const statusLabels: Record<DictionaryEntry['status'], string> = {
 };
 
 export function DictionaryPage() {
+  const courses = useAppStore((state) => state.courses);
   const dictionary = useAppStore((state) => state.dictionary);
   const remove = useAppStore((state) => state.removeDictionaryEntry);
   const add = useAppStore((state) => state.addDictionaryEntry);

@@ -1,4 +1,4 @@
-import type { Course, DictionaryEntry, Notification, Payment, Session, User } from '../types';
+import type { Course, DictionaryEntry, InstructorProfile, Notification, Payment, Session, TutoringSlot, User } from '../types';
 
 const commonTest = {
   id: 'test-basics',
@@ -48,6 +48,9 @@ export const courses: Course[] = [
     category: 'Общий английский',
     instructor: 'Наталья Орлова',
     instructorAvatar: 'НО',
+    instructorId: 'u-teacher',
+    ownerId: 'u-teacher',
+    status: 'published',
     price: 12900,
     oldPrice: 15900,
     rating: 4.9,
@@ -211,6 +214,9 @@ export const courses: Course[] = [
     category: 'Путешествия',
     instructor: 'Мария Белова',
     instructorAvatar: 'МБ',
+    instructorId: 'teacher-maria',
+    ownerId: 'teacher-maria',
+    status: 'published',
     price: 8900,
     rating: 4.8,
     reviews: 96,
@@ -275,6 +281,9 @@ export const courses: Course[] = [
     category: 'Разговорный английский',
     instructor: 'Алексей Грин',
     instructorAvatar: 'АГ',
+    instructorId: 'teacher-alex',
+    ownerId: 'teacher-alex',
+    status: 'published',
     price: 14900,
     oldPrice: 17900,
     rating: 4.9,
@@ -371,6 +380,7 @@ export const demoUsers: Record<'student' | 'teacher' | 'admin', User> = {
     id: 'u-student',
     name: 'Анна Воронцова',
     email: 'student@lingua.demo',
+    phone: '+7 999 111-22-33',
     role: 'student',
     avatar: 'АВ',
     level: 'A1',
@@ -380,6 +390,7 @@ export const demoUsers: Record<'student' | 'teacher' | 'admin', User> = {
     id: 'u-teacher',
     name: 'Наталья Орлова',
     email: 'teacher@lingua.demo',
+    phone: '+7 999 222-33-44',
     role: 'teacher',
     avatar: 'НО',
     level: 'C2',
@@ -389,6 +400,7 @@ export const demoUsers: Record<'student' | 'teacher' | 'admin', User> = {
     id: 'u-admin',
     name: 'Администратор',
     email: 'admin@lingua.demo',
+    phone: '+7 999 000-00-01',
     role: 'admin',
     avatar: 'AD',
     timezone: 'Europe/Moscow'
@@ -539,4 +551,64 @@ export const notifications: Notification[] = [
     read: true,
     type: 'payment'
   }
+];
+
+
+export const instructors: InstructorProfile[] = [
+  {
+    id: 'u-teacher',
+    name: 'Наталья Орлова',
+    avatar: 'НО',
+    headline: 'Общий и разговорный английский · A1–C1',
+    bio: 'Помогаю спокойно перейти от понимания правил к живой речи. На занятиях много разговорной практики и понятной обратной связи.',
+    level: 'C2',
+    rating: 4.9,
+    reviews: 214,
+    specialties: ['С нуля', 'Разговорный', 'Грамматика'],
+    individualPrice: 2900,
+    groupPrice: 1100
+  },
+  {
+    id: 'teacher-maria',
+    name: 'Мария Белова',
+    avatar: 'МБ',
+    headline: 'Travel English и английский для жизни · A1–B2',
+    bio: 'Практические сценарии: поездки, бытовые ситуации и уверенное общение без страха ошибиться.',
+    level: 'C1',
+    rating: 4.8,
+    reviews: 137,
+    specialties: ['Путешествия', 'Диалоги', 'A1–B2'],
+    individualPrice: 2700,
+    groupPrice: 950
+  },
+  {
+    id: 'teacher-alex',
+    name: 'Алексей Грин',
+    avatar: 'АГ',
+    headline: 'Разговорная практика и Business English · B1–C1',
+    bio: 'Развиваем беглость речи, аргументацию и лексику для работы. Занятия строятся вокруг реальных разговорных задач.',
+    level: 'C2',
+    rating: 4.9,
+    reviews: 188,
+    specialties: ['B1–C1', 'Speaking', 'Business'],
+    individualPrice: 3400,
+    groupPrice: 1300
+  }
+];
+
+const slotDate = (days: number, hour: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  d.setHours(hour, 0, 0, 0);
+  return d.toISOString();
+};
+
+export const tutoringSlots: TutoringSlot[] = [
+  { id: 'slot-1', instructorId: 'u-teacher', type: 'individual', startAt: slotDate(1, 18), duration: 50, price: 2900, maxAttendees: 1, attendees: 0 },
+  { id: 'slot-2', instructorId: 'u-teacher', type: 'group', startAt: slotDate(2, 19), duration: 60, price: 1100, maxAttendees: 8, attendees: 4 },
+  { id: 'slot-3', instructorId: 'u-teacher', type: 'individual', startAt: slotDate(4, 12), duration: 50, price: 2900, maxAttendees: 1, attendees: 0 },
+  { id: 'slot-4', instructorId: 'teacher-maria', type: 'individual', startAt: slotDate(1, 16), duration: 50, price: 2700, maxAttendees: 1, attendees: 0 },
+  { id: 'slot-5', instructorId: 'teacher-maria', type: 'group', startAt: slotDate(3, 18), duration: 60, price: 950, maxAttendees: 10, attendees: 6 },
+  { id: 'slot-6', instructorId: 'teacher-alex', type: 'group', startAt: slotDate(2, 20), duration: 75, price: 1300, maxAttendees: 12, attendees: 7 },
+  { id: 'slot-7', instructorId: 'teacher-alex', type: 'individual', startAt: slotDate(5, 17), duration: 50, price: 3400, maxAttendees: 1, attendees: 0 }
 ];

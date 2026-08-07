@@ -19,11 +19,14 @@ import {
   WalletCards
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { StatCard } from '../components/StatCard';
 import { Avatar, Badge, Button, Card } from '../components/ui';
-import { courses, demoUsers, payments } from '../data/mock';
+import { demoUsers } from '../data/mock';
+import { useAppStore } from '../store/useAppStore';
+import type { Course } from '../types';
 import { formatMoney, formatShortDate } from '../utils/format';
 
 export function AdminPage() {
@@ -46,6 +49,9 @@ export function AdminPage() {
 }
 
 function AdminOverview() {
+  const payments = useAppStore((state) => state.payments);
+  const courses = useAppStore((state) => state.courses);
+  const moderationCount = courses.filter((course) => course.status === 'moderation').length;
   return <>
     <div className="dashboard-stats admin-stats">
       <StatCard icon={<Users size={22}/>} label="Пользователи" value="10 284" note="+428 за 30 дней" />
@@ -70,7 +76,7 @@ function AdminOverview() {
     <div className="admin-bottom-grid">
       <Card className="data-card compact-data-card"><header><div><h2>Последние платежи</h2><p>Обновляются через webhook.</p></div><button className="text-link">Все платежи</button></header><div className="data-table-wrap"><table><thead><tr><th>Заказ</th><th>Сумма</th><th>Статус</th></tr></thead><tbody>{payments.map((payment)=><tr key={payment.id}><td><strong>{payment.number}</strong><small>{payment.title}</small></td><td>{formatMoney(payment.amount)}</td><td><Badge tone="green">Оплачен</Badge></td></tr>)}</tbody></table></div></Card>
       <Card className="alerts-card"><header><div><h2>Требуют внимания</h2><p>Ошибки и задачи модерации.</p></div><Badge tone="amber">4</Badge></header>{[
-        ['3 курса ожидают модерации','Контент','amber'],
+        [`${moderationCount} курса ожидают модерации`,'Контент','amber'],
         ['1 webhook не обработан','Платежи','red'],
         ['Сертификат TURN истекает через 18 дней','Инфраструктура','amber'],
         ['2 файла не прошли конвертацию','Медиа','amber']
@@ -80,21 +86,33 @@ function AdminOverview() {
 }
 
 function AdminUsers() {
+  const [search, setSearch] = useState('');
   const users = [
     demoUsers.student,
     demoUsers.teacher,
     demoUsers.admin,
-    { id:'u4',name:'Михаил Кузнецов',email:'m.k@example.com',role:'student' as const,avatar:'МК',timezone:'Europe/Moscow' },
-    { id:'u5',name:'Мария Белова',email:'maria.teacher@example.com',role:'teacher' as const,avatar:'МБ',timezone:'Europe/Moscow' }
+    { id:'u4',name:'Михаил Кузнецов',email:'m.k@example.com',phone:'+7 999 345-67-89',role:'student' as const,avatar:'МК',timezone:'Europe/Moscow' },
+    { id:'u5',name:'Мария Белова',email:'maria.teacher@example.com',phone:'+7 999 456-78-90',role:'teacher' as const,avatar:'МБ',timezone:'Europe/Moscow' }
   ];
-  return <Card className="data-card"><header><div><h2>Пользователи</h2><p>Роли, статусы и доступы.</p></div><div className="data-card__actions"><label><Search size={16}/><input placeholder="Поиск"/></label><Button>Добавить пользователя</Button></div></header><div className="data-table-wrap"><table><thead><tr><th>Пользователь</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th></th></tr></thead><tbody>{users.map((user,index)=><tr key={user.id}><td><div className="person-cell"><Avatar value={user.avatar??'U'} size="sm"/><span><strong>{user.name}</strong><small>{user.email}</small></span></div></td><td><Badge tone={user.role==='admin'?'red':user.role==='teacher'?'violet':'neutral'}>{user.role==='admin'?'Администратор':user.role==='teacher'?'Преподаватель':'Ученик'}</Badge></td><td><Badge tone="green">Активен</Badge></td><td>{index===0?'сегодня, 20:14':index===1?'сегодня, 18:42':'вчера'}</td><td><button><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></div></Card>;
+  const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email} ${user.phone}`.toLowerCase().includes(search.toLowerCase())), [search]);
+  return <Card className="data-card"><header><div><h2>Пользователи</h2><p>Роли, статусы и доступы. Поиск работает по имени, Email и телефону.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск"/></label><Button>Добавить пользователя</Button></div></header><div className="data-table-wrap"><table><thead><tr><th>Пользователь</th><th>Телефон</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th></th></tr></thead><tbody>{filtered.map((user,index)=><tr key={user.id}><td><div className="person-cell"><Avatar value={user.avatar??'U'} size="sm"/><span><strong>{user.name}</strong><small>{user.email}</small></span></div></td><td>{user.phone}</td><td><Badge tone={user.role==='admin'?'red':user.role==='teacher'?'violet':'neutral'}>{user.role==='admin'?'Администратор':user.role==='teacher'?'Преподаватель':'Ученик'}</Badge></td><td><Badge tone="green">Активен</Badge></td><td>{index===0?'сегодня, 20:14':index===1?'сегодня, 18:42':'вчера'}</td><td><button><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></div></Card>;
 }
 
 function AdminCourses() {
-  return <Card className="data-card"><header><div><h2>Курсы</h2><p>Публикация, авторы, цены и зачисления.</p></div><Button>Создать курс</Button></header><div className="data-table-wrap"><table><thead><tr><th>Курс</th><th>Автор</th><th>Статус</th><th>Цена</th><th>Ученики</th><th></th></tr></thead><tbody>{courses.map((course,index)=><tr key={course.id}><td><div className="course-table-cell"><img src={course.cover} alt=""/><span><strong>{course.title}</strong><small>{course.level} · {course.category}</small></span></div></td><td>{course.instructor}</td><td><Badge tone={index===3?'amber':'green'}>{index===3?'На модерации':'Опубликован'}</Badge></td><td>{formatMoney(course.price)}</td><td>{course.students}</td><td><button><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></div></Card>;
+  const courses = useAppStore((state) => state.courses);
+  const approveCourse = useAppStore((state) => state.approveCourse);
+  const [search, setSearch] = useState('');
+  const filtered = useMemo(() => courses.filter((course) => `${course.title} ${course.instructor} ${course.category}`.toLowerCase().includes(search.toLowerCase())), [courses, search]);
+  return <Card className="data-card"><header><div><h2>Курсы</h2><p>Создание, редактирование, модерация, публикация и цены.</p></div><div className="data-card__actions"><label><Search size={16}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Поиск курса"/></label><Link to="/admin/course/new"><Button>Создать курс</Button></Link></div></header><div className="data-table-wrap"><table><thead><tr><th>Курс</th><th>Автор</th><th>Статус</th><th>Цена</th><th>Ученики</th><th>Действия</th></tr></thead><tbody>{filtered.map((course)=><tr key={course.id}><td><div className="course-table-cell"><img src={course.cover} alt=""/><span><strong>{course.title}</strong><small>{course.level} · {course.category}</small>{course.moderationComment ? <small className="course-row-comment">{course.moderationComment}</small> : null}</span></div></td><td>{course.instructor}</td><td><AdminCourseStatus course={course}/></td><td>{formatMoney(course.price)}</td><td>{course.students}</td><td><div className="table-actions">{course.status==='moderation'?<Button size="sm" onClick={()=>approveCourse(course.id)}>Опубликовать</Button>:null}<Link to={`/admin/course/${course.id}/edit`}><Button size="sm" variant="secondary">Редактировать</Button></Link></div></td></tr>)}</tbody></table></div></Card>;
+}
+
+function AdminCourseStatus({ course }: { course: Course }) {
+  const status = course.status ?? 'draft';
+  return <Badge tone={status==='published'?'green':status==='moderation'?'amber':status==='revision'?'red':'neutral'}>{status==='published'?'Опубликован':status==='moderation'?'На модерации':status==='revision'?'На доработке':status==='archived'?'Архив':'Черновик'}</Badge>;
 }
 
 function AdminPayments() {
+  const payments = useAppStore((state) => state.payments);
   const extended = [
     ...payments,
     { id:'p3',number:'LNG-2026-00482',title:'Разговорная практика B1',amount:14900,date:'2026-08-06T16:20:00.000Z',status:'paid' as const },

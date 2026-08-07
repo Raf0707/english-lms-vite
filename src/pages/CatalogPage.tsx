@@ -4,12 +4,13 @@ import { CourseCard } from '../components/CourseCard';
 import { PublicFooter } from '../components/PublicFooter';
 import { PublicHeader } from '../components/PublicHeader';
 import { Button } from '../components/ui';
-import { courses } from '../data/mock';
-
-const levels = ['Все уровни', 'A1', 'A2', 'B1', 'A2–B1'];
-const categories = ['Все направления', ...Array.from(new Set(courses.map((course) => course.category)))];
+import { useAppStore } from '../store/useAppStore';
 
 export function CatalogPage() {
+  const allCourses = useAppStore((state) => state.courses);
+  const courses = useMemo(() => allCourses.filter((course) => course.status === 'published'), [allCourses]);
+  const categories = useMemo(() => ['Все направления', ...Array.from(new Set(courses.map((course) => course.category)))], [courses]);
+  const levels = useMemo(() => ['Все уровни', ...Array.from(new Set(courses.map((course) => course.level).filter(Boolean)))], [courses]);
   const [search, setSearch] = useState('');
   const [level, setLevel] = useState('Все уровни');
   const [category, setCategory] = useState('Все направления');
