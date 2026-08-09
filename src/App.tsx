@@ -4,12 +4,15 @@ import { AuthBootstrap } from './components/AuthBootstrap';
 import { Toasts } from './components/Toasts';
 import { AdminPage } from './pages/AdminPage';
 import { CatalogPage } from './pages/CatalogPage';
+import { ChatPage } from './pages/ChatPage';
 import { CoursePage } from './pages/CoursePage';
 import { CourseEditorPage } from './pages/CourseEditorPage';
+import { CourseAccessPage } from './pages/CourseAccessPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DictionaryPage } from './pages/DictionaryPage';
 import { HomePage } from './pages/HomePage';
 import { LearningPage } from './pages/LearningPage';
+import { MaterialsPage } from './pages/MaterialsPage';
 import { LessonPage } from './pages/LessonPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -35,6 +38,7 @@ export default function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/app" element={<ProtectedRoute roles={['student']}><DashboardPage /></ProtectedRoute>} />
         <Route path="/app/learning" element={<ProtectedRoute roles={['student']}><LearningPage /></ProtectedRoute>} />
+        <Route path="/app/catalog" element={<ProtectedRoute roles={['student']}><CatalogPage /></ProtectedRoute>} />
         <Route path="/app/teachers" element={<ProtectedRoute roles={['student']}><TutoringPage /></ProtectedRoute>} />
         <Route path="/app/course/:courseId/lesson/:lessonId" element={<ProtectedRoute roles={['student']}><LessonPage /></ProtectedRoute>} />
         <Route path="/app/dictionary" element={<ProtectedRoute roles={['student']}><DictionaryPage /></ProtectedRoute>} />
@@ -44,9 +48,13 @@ export default function App() {
         <Route path="/app/payments" element={<ProtectedRoute roles={['student']}><PaymentsPage /></ProtectedRoute>} />
         <Route path="/app/profile" element={<ProtectedRoute roles={['student']}><ProfilePage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute roles={['student', 'teacher', 'admin']}><ProfilePage /></ProtectedRoute>} />
+        <Route path="/chat" element={<ProtectedRoute roles={['student', 'teacher', 'admin']}><ChatPage /></ProtectedRoute>} />
+        <Route path="/materials" element={<ProtectedRoute roles={['student', 'teacher', 'admin']}><MaterialsPage /></ProtectedRoute>} />
         <Route path="/teacher" element={<ProtectedRoute roles={['teacher']}><TeacherPage /></ProtectedRoute>} />
         <Route path="/teacher/course/new" element={<ProtectedRoute roles={['teacher']}><CourseEditorPage /></ProtectedRoute>} />
         <Route path="/teacher/course/:courseId/edit" element={<ProtectedRoute roles={['teacher']}><CourseEditorPage /></ProtectedRoute>} />
+        <Route path="/teacher/course/:courseId/access" element={<ProtectedRoute roles={['teacher']}><CourseAccessPage /></ProtectedRoute>} />
+        <Route path="/admin/course/:courseId/access" element={<ProtectedRoute roles={['admin']}><CourseAccessPage /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute roles={['admin']}><AdminPage /></ProtectedRoute>} />
         <Route path="/admin/course/new" element={<ProtectedRoute roles={['admin']}><CourseEditorPage /></ProtectedRoute>} />
         <Route path="/admin/course/:courseId/edit" element={<ProtectedRoute roles={['admin']}><CourseEditorPage /></ProtectedRoute>} />

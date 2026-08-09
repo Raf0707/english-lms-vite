@@ -1,7 +1,8 @@
 import { BookOpen, Clock3, Play, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
+import { CourseCoverImage } from '../components/CourseCoverImage';
 import { ProgressRing } from '../components/ProgressRing';
 import { Badge, Button, Card } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
@@ -11,8 +12,16 @@ type LearningFilter = 'all' | 'progress' | 'completed';
 export function LearningPage() {
   const courses = useAppStore((state) => state.courses);
   const enrollments = useAppStore((state) => state.enrollments);
+  const learningStatus = useAppStore((state) => state.learningStatus);
+  const loadEnrollments = useAppStore((state) => state.loadEnrollments);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<LearningFilter>('all');
+
+  useEffect(() => {
+    if (learningStatus === 'idle' || learningStatus === 'error') {
+      void loadEnrollments().catch(() => undefined);
+    }
+  }, [learningStatus, loadEnrollments]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -44,7 +53,7 @@ export function LearningPage() {
           const isCompleted = enrollment.progress >= 100;
           return (
             <Card className="learning-card" key={course.id}>
-              <div className="learning-card__cover"><img src={course.cover} alt="" /><Badge tone="green">{course.level}</Badge></div>
+              <div className="learning-card__cover"><CourseCoverImage course={course} mode="private" alt="" /><Badge tone="green">{course.level}</Badge></div>
               <div className="learning-card__body">
                 <div className="learning-card__status"><span>{isCompleted ? 'Завершён' : 'В процессе'}</span><small>Доступ до {enrollment.expiresAt ? new Intl.DateTimeFormat('ru-RU').format(new Date(enrollment.expiresAt)) : 'без ограничений'}</small></div>
                 <h2>{course.title}</h2>
@@ -57,9 +66,11 @@ export function LearningPage() {
             </Card>
           );
         })}
-        {!visible.length ? <Card className="learning-search-empty"><div className="learning-search-empty__title"><Search size={26}/><h3>Курсы не найдены</h3></div><p>Измените поисковый запрос или выберите другой фильтр.</p><Button size="sm" variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>Сбросить поиск</Button></Card> : null}
+        {!visible.length && learningStatus === 'loading' ? <Card className="learning-search-empty"><div className="learning-search-empty__title"><Search size={26}/><h3>Загружаем ваши курсы…</h3></div><p>Получаем Enrollment и вашу версию курса с backend.</p></Card> : null}
+        {!visible.length && learningStatus === 'error' ? <Card className="learning-search-empty"><div className="learning-search-empty__title"><Search size={26}/><h3>Не удалось загрузить обучение</h3></div><p>Проверьте соединение с backend и попробуйте ещё раз.</p><Button size="sm" variant="secondary" onClick={() => void loadEnrollments().catch(() => undefined)}>Повторить</Button></Card> : null}
+        {!visible.length && learningStatus === 'ready' ? <Card className="learning-search-empty"><div className="learning-search-empty__title"><Search size={26}/><h3>{enrollments.length ? 'Курсы не найдены' : 'У вас пока нет купленных курсов'}</h3></div><p>{enrollments.length ? 'Измените поисковый запрос или выберите другой фильтр.' : 'Откройте каталог и выберите первый курс.'}</p>{enrollments.length ? <Button size="sm" variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>Сбросить поиск</Button> : null}</Card> : null}
       </div>
-      <Card className="learning-discover"><div><span className="eyebrow">Новый навык</span><h2>Добавьте ещё одно направление</h2><p>Курсы по путешествиям, разговорной практике и грамматике.</p></div><Link to="/catalog"><Button variant="secondary">Открыть каталог</Button></Link></Card>
+      <Card className="learning-discover"><div><span className="eyebrow">Новый навык</span><h2>Добавьте ещё одно направление</h2><p>Курсы по путешествиям, разговорной практике и грамматике.</p></div><Link to="/app/catalog"><Button variant="secondary">Открыть каталог</Button></Link></Card>
     </AppLayout>
   );
 }

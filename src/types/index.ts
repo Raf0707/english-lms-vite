@@ -34,7 +34,9 @@ export interface AssignmentData {
   acceptedFileTypes?: string[];
   allowTextAnswer: boolean;
   allowFileUpload: boolean;
+  dueAt?: string;
 }
+
 
 export interface TextBlockStyle {
   fontSize?: 'sm' | 'md' | 'lg' | 'xl';
@@ -52,10 +54,12 @@ export interface LessonBlock {
   content?: string;
   url?: string;
   fileName?: string;
+  assetId?: string;
   table?: TableBlockData;
   assignment?: AssignmentData;
   conferenceSessionId?: string;
   textStyle?: TextBlockStyle;
+  richTextHtml?: string;
 }
 
 export interface Question {
@@ -71,6 +75,7 @@ export interface Question {
 
 export interface Test {
   id: string;
+  backendVersionId?: string;
   title: string;
   passScore: number;
   questions: Question[];
@@ -112,6 +117,7 @@ export interface Course {
   shortDescription: string;
   description: string;
   cover: string;
+  coverAssetId?: string;
   level: string;
   category: string;
   instructor: string;
@@ -136,6 +142,15 @@ export interface Course {
   schedule?: CourseScheduleItem[];
   createdAt?: string;
   updatedAt?: string;
+  source?: 'mock' | 'backend';
+  backendVersionNumber?: number;
+  backendPublishedVersionNumber?: number;
+  hasPublishedVersion?: boolean;
+  accessMode?: 'public-sale' | 'public-free' | 'managed';
+  managedKind?: 'individual' | 'group';
+  completionDueAt?: string;
+  moduleCount?: number;
+  lessonCount?: number;
 }
 
 export interface Enrollment {
@@ -172,6 +187,7 @@ export interface AssignmentSubmission {
   studentName: string;
   answer?: string;
   fileName?: string;
+  fileAssetId?: string;
   status: 'pending' | 'approved' | 'revision';
   score?: number;
   feedback?: string;
@@ -238,4 +254,6 @@ export interface Notification {
   date: string;
   read: boolean;
   type: 'lesson' | 'payment' | 'session' | 'system';
+  actionPath?: string;
 }
+

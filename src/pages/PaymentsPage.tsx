@@ -1,10 +1,12 @@
 import { CheckCircle2, CreditCard, Download, ExternalLink, ReceiptText, RotateCcw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { Badge, Button, Card } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
 import { formatMoney, formatShortDate } from '../utils/format';
 
 export function PaymentsPage() {
+  const navigate = useNavigate();
   const payments = useAppStore((state) => state.payments);
   const total = payments.filter((item) => item.status === 'paid').reduce((sum, item) => sum + item.amount, 0);
   return (
@@ -23,7 +25,7 @@ export function PaymentsPage() {
           </table>
         </div>
       </Card>
-      <Card className="payment-help"><CheckCircle2 size={22} /><div><strong>Нужна помощь с оплатой?</strong><p>Напишите в поддержку и укажите номер заказа — мы проверим статус операции.</p></div><Button variant="ghost">Обратиться в поддержку</Button></Card>
+      <Card className="payment-help"><CheckCircle2 size={22} /><div><strong>Нужна помощь с оплатой?</strong><p>Напишите в поддержку и укажите номер заказа — мы проверим статус операции.</p></div><Button variant="ghost" onClick={() => navigate('/chat?tab=support')}>Обратиться в поддержку</Button></Card>
     </AppLayout>
   );
 }

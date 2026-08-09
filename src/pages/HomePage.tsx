@@ -17,12 +17,14 @@ import {
   Users,
   Video
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CourseCard } from '../components/CourseCard';
 import { PublicFooter } from '../components/PublicFooter';
 import { PublicHeader } from '../components/PublicHeader';
 import { Avatar, Badge, Button, Card } from '../components/ui';
-import { useAppStore } from '../store/useAppStore';
+import type { Course } from '../types';
+import { courseBackend, publicCourseToCourse } from '../services/courseBackend';
 
 const method = [
   {
@@ -43,7 +45,17 @@ const method = [
 ];
 
 export function HomePage() {
-  const courses = useAppStore((state) => state.courses).filter((course) => course.status === 'published');
+  const [courses, setCourses] = useState<Course[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void courseBackend.listPublic().then((result) => {
+      if (!cancelled) setCourses(result.items.map(publicCourseToCourse));
+    }).catch(() => {
+      if (!cancelled) setCourses([]);
+    });
+    return () => { cancelled = true; };
+  }, []);
   return (
     <div className="public-page">
       <PublicHeader />
@@ -126,9 +138,9 @@ export function HomePage() {
               </div>
               <Link to="/catalog" className="text-link">Все курсы <ArrowRight size={17} /></Link>
             </div>
-            <div className="course-grid">
+            {courses.length ? <div className="course-grid">
               {courses.slice(0, 3).map((course) => <CourseCard key={course.id} course={course} />)}
-            </div>
+            </div> : <Card className="catalog-empty"><h3>Курсы готовятся к публикации</h3><p>Как только администратор опубликует курс, он появится здесь автоматически.</p></Card>}
           </div>
         </section>
 

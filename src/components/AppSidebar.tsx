@@ -6,18 +6,21 @@ import {
   ChevronRight,
   CreditCard,
   FileCheck2,
+  FolderOpen,
   GraduationCap,
   LayoutDashboard,
   LifeBuoy,
+  MessageCircle,
   LogOut,
   Settings,
   ShieldCheck,
+  Search,
   UserRoundSearch,
   UsersRound,
   Video,
   X
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 import { classNames } from '../utils/format';
 import { Logo } from './Logo';
@@ -25,10 +28,13 @@ import { Logo } from './Logo';
 const studentLinks = [
   { to: '/app', label: 'Главная', icon: LayoutDashboard, end: true },
   { to: '/app/learning', label: 'Моё обучение', icon: GraduationCap },
+  { to: '/app/catalog', label: 'Каталог курсов', icon: Search },
   { to: '/app/teachers', label: 'Преподаватели', icon: UserRoundSearch },
   { to: '/app/dictionary', label: 'Мой словарь', icon: BookOpenCheck },
   { to: '/app/schedule', label: 'Расписание', icon: CalendarDays },
   { to: '/app/payments', label: 'Платежи', icon: CreditCard },
+  { to: '/chat', label: 'Чаты', icon: MessageCircle },
+  { to: '/materials', label: 'Материалы', icon: FolderOpen },
   { to: '/app/profile', label: 'Профиль', icon: Settings }
 ];
 
@@ -39,6 +45,8 @@ const teacherLinks = [
   { to: '/teacher?tab=reviews', label: 'Проверка заданий', icon: FileCheck2 },
   { to: '/teacher?tab=sessions', label: 'Занятия', icon: Video },
   { to: '/teacher?tab=finance', label: 'Финансы', icon: ChartNoAxesCombined },
+  { to: '/chat', label: 'Чаты', icon: MessageCircle },
+  { to: '/materials', label: 'Материалы', icon: FolderOpen },
   { to: '/profile', label: 'Профиль', icon: Settings }
 ];
 
@@ -48,6 +56,8 @@ const adminLinks = [
   { to: '/admin?tab=courses', label: 'Курсы', icon: GraduationCap },
   { to: '/admin?tab=payments', label: 'Платежи', icon: CreditCard },
   { to: '/admin?tab=system', label: 'Система', icon: ShieldCheck },
+  { to: '/chat', label: 'Чаты', icon: MessageCircle },
+  { to: '/materials', label: 'Материалы', icon: FolderOpen },
   { to: '/profile', label: 'Профиль', icon: Settings }
 ];
 
@@ -71,12 +81,14 @@ export function AppSidebar() {
   const toggleCollapsed = useAppStore((state) => state.toggleSidebarCollapsed);
   const logout = useAppStore((state) => state.logout);
   const location = useLocation();
+  const navigate = useNavigate();
 
   if (!user) return null;
   const links = user.role === 'admin' ? adminLinks : user.role === 'teacher' ? teacherLinks : studentLinks;
 
   const openSupport = () => {
-    window.location.href = `mailto:support@lingua.demo?subject=${encodeURIComponent('Поддержка Lingua LMS')}&body=${encodeURIComponent(`Здравствуйте!\n\nПользователь: ${user.name}\nEmail: ${user.email}\n\nОпишите вопрос:`)}`;
+    navigate('/chat?tab=support');
+    close();
   };
 
   return (

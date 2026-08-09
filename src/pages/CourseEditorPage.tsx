@@ -21,6 +21,7 @@ import {
   MicOff,
   Plus,
   Quote,
+  RefreshCw,
   Save,
   Send,
   Table2,
@@ -33,11 +34,14 @@ import {
 import { ChangeEvent, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type Dispatch, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
+import { RichTextEditor } from '../components/RichTextEditor';
 import { Badge, Button, Card } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
-import { instructors } from '../data/mock';
 import type { Course, CourseScheduleItem, Lesson, LessonBlock, Module, Question } from '../types';
 import { formatMoney } from '../utils/format';
+import { legacyTextToRichHtml } from '../utils/richText';
+import { courseBackend, editorToCourse, saveCourseDraft } from '../services/courseBackend';
+import { api, type BackendAssetKind } from '../services/api';
 
 const id = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9а-яё]+/gi, '-').replace(/^-|-$/g, '');
@@ -66,7 +70,9 @@ function emptyCourse(userId: string, name: string, avatar: string): Course {
     outcomes: [],
     modules: [],
     schedule: [],
-    status: 'draft'
+    status: 'draft',
+    accessMode: 'public-sale',
+    managedKind: 'individual'
   };
 }
 
@@ -127,29 +133,30 @@ function lessonBlockFromFile(file: File): LessonBlock {
           : /\.(mp4|webm|mov|m4v)$/i.test(name) ? 'video'
             : /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(name) ? 'audio'
               : 'file';
-  return { id: id('block'), type, title: file.name, fileName: file.name, url: URL.createObjectURL(file) };
+  return { id: id('block'), type, title: file.name, fileName: file.name };
+}
+
+
+function assetKindForBlock(type: LessonBlock['type']): BackendAssetKind {
+  if (type === 'image') return 'IMAGE';
+  if (type === 'video') return 'VIDEO';
+  if (type === 'audio') return 'AUDIO';
+  return 'FILE';
 }
 
 export function CourseEditorPage() {
   const { courseId } = useParams();
   const navigate = useNavigate();
   const user = useAppStore((state) => state.user)!;
-  const courses = useAppStore((state) => state.courses);
-  const upsertCourse = useAppStore((state) => state.upsertCourse);
-  const submitForModeration = useAppStore((state) => state.submitCourseForModeration);
-  const approveCourse = useAppStore((state) => state.approveCourse);
-  const requestRevision = useAppStore((state) => state.requestCourseRevision);
+  const managedCourses = useAppStore((state) => state.managedCourses);
+  const loadManagedCourses = useAppStore((state) => state.loadManagedCourses);
+  const setManagedCourse = useAppStore((state) => state.setManagedCourse);
   const addToast = useAppStore((state) => state.addToast);
-  const source = useMemo(() => courses.find((item) => item.id === courseId), [courseId, courses]);
-  const [course, setCourse] = useState<Course>(() => {
-    if (source) return structuredClone(source);
-    const draft = emptyCourse(user.id, user.name, user.avatar ?? user.name.slice(0, 2));
-    if (user.role === 'admin' && instructors[0]) {
-      const teacher = instructors[0];
-      return { ...draft, instructor: teacher.name, instructorAvatar: teacher.avatar, instructorId: teacher.id, ownerId: teacher.id };
-    }
-    return draft;
-  });
+  const source = useMemo(() => managedCourses.find((item) => item.id === courseId), [courseId, managedCourses]);
+  const [course, setCourse] = useState<Course>(() => source ? structuredClone(source) : emptyCourse(user.id, user.name, user.avatar ?? user.name.slice(0, 2)));
+  const [editorLoading, setEditorLoading] = useState(Boolean(courseId));
+  const [editorLoadError, setEditorLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<'main' | 'program' | 'schedule' | 'publication'>('main');
   const [savedId, setSavedId] = useState(course.id);
   const [collapsedModules, setCollapsedModules] = useState<Set<string>>(new Set());
@@ -163,6 +170,46 @@ export function CourseEditorPage() {
   const dragItemRef = useRef<DragItem | null>(null);
   const pointerDragRef = useRef<DragItem | null>(null);
   const dropTargetRef = useRef<EditorDropTarget | null>(null);
+
+  useEffect(() => {
+    if (!courseId) {
+      setEditorLoading(false);
+      setEditorLoadError(null);
+      return;
+    }
+    let cancelled = false;
+    setEditorLoading(true);
+    setEditorLoadError(null);
+    void courseBackend.editor(courseId)
+      .then((editor) => {
+        if (cancelled) return;
+        const summary = managedCourses.find((item) => item.id === courseId);
+        const mapped = editorToCourse(editor, {
+          id: summary?.instructorId ?? user.id,
+          name: summary?.instructor ?? user.name,
+          avatar: summary?.instructorAvatar ?? user.avatar
+        });
+        setCourse(mapped);
+        setSavedId(courseId);
+        setTagsInput(mapped.tags.join(', '));
+      })
+      .catch((error) => {
+        if (!cancelled) setEditorLoadError(error instanceof Error ? error.message : 'Не удалось загрузить курс');
+      })
+      .finally(() => { if (!cancelled) setEditorLoading(false); });
+    return () => { cancelled = true; };
+  }, [courseId, user.id]);
+
+  useEffect(() => {
+    const assetId = course.coverAssetId;
+    if (!assetId) return;
+    let cancelled = false;
+    void api.media.url(assetId).then((asset) => {
+      if (cancelled) return;
+      setCourse((current) => current.coverAssetId === assetId ? { ...current, cover: asset.url } : current);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [course.coverAssetId]);
 
   const setActiveDropTarget = (target: EditorDropTarget | null) => {
     dropTargetRef.current = target;
@@ -328,20 +375,19 @@ export function CourseEditorPage() {
 
   const isAdmin = user.role === 'admin';
   const isExistingRoute = Boolean(courseId);
-  const canEditSource = !source || isAdmin || source.ownerId === user.id || source.instructorId === user.id;
 
-  if (isExistingRoute && !source) {
+  if (editorLoading) {
     return (
-      <AppLayout title="Курс не найден" subtitle="Проверьте ссылку или вернитесь к списку курсов.">
-        <Card className="editor-access-state"><XCircle size={28}/><h2>Курс не найден</h2><p>Возможно, он был удалён или ссылка устарела.</p><Link to={isAdmin ? '/admin?tab=courses' : '/teacher?tab=courses'}><Button>К списку курсов</Button></Link></Card>
+      <AppLayout title="Загрузка курса" subtitle="Получаем рабочую версию из backend.">
+        <Card className="editor-access-state"><RefreshCw className="spin" size={28}/><h2>Загружаем редактор</h2><p>Модули, уроки, блоки, тесты и расписание читаются из PostgreSQL.</p></Card>
       </AppLayout>
     );
   }
 
-  if (!canEditSource) {
+  if (isExistingRoute && editorLoadError) {
     return (
-      <AppLayout title="Нет доступа" subtitle="Редактировать этот курс может только его автор или администратор.">
-        <Card className="editor-access-state"><XCircle size={28}/><h2>Недостаточно прав</h2><p>Курс принадлежит другому преподавателю.</p><Link to="/teacher?tab=courses"><Button>К моим курсам</Button></Link></Card>
+      <AppLayout title="Курс не открыт" subtitle="Backend не вернул редактор курса.">
+        <Card className="editor-access-state"><XCircle size={28}/><h2>Не удалось открыть курс</h2><p>{editorLoadError}</p><Link to={isAdmin ? '/admin?tab=courses' : '/teacher?tab=courses'}><Button>К списку курсов</Button></Link></Card>
       </AppLayout>
     );
   }
@@ -354,39 +400,91 @@ export function CourseEditorPage() {
   };
   const expandAll = () => { setCollapsedModules(new Set()); setCollapsedLessons(new Set()); setCollapsedBlocks(new Set()); };
 
-  const save = (quiet = false) => {
+  const save = async (quiet = false) => {
     if (!course.title.trim()) {
       addToast({ title: 'Введите название курса', tone: 'warning' });
       setTab('main');
       return null;
     }
-    const record = upsertCourse({ ...course, id: savedId || course.id, slug: course.slug || slugify(course.title) || `course-${Date.now()}` });
-    setCourse(record);
-    setSavedId(record.id);
-    if (!quiet) addToast({ title: 'Курс сохранён', text: 'Изменения сохранены локально в демо-проекте.', tone: 'success' });
-    return record;
+    if (course.status === 'moderation') {
+      addToast({ title: 'Версия на модерации', text: 'Сначала администратор должен опубликовать её или вернуть на доработку.', tone: 'warning' });
+      return null;
+    }
+    setSaving(true);
+    try {
+      const result = await saveCourseDraft({ ...course, slug: course.slug || slugify(course.title) }, savedId || courseId);
+      setCourse(result.course);
+      setSavedId(result.courseId);
+      setManagedCourse(result.course);
+      await loadManagedCourses();
+      if (!courseId) navigate(`${isAdmin ? '/admin/course' : '/teacher/course'}/${result.courseId}/edit`, { replace: true });
+      if (!quiet) addToast({ title: 'Курс сохранён', text: 'Черновик синхронизирован с PostgreSQL.', tone: 'success' });
+      return result.course;
+    } catch (error) {
+      addToast({ title: 'Не удалось сохранить курс', text: error instanceof Error ? error.message : 'Ошибка backend', tone: 'warning' });
+      return null;
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const submit = () => {
-    const record = save(true);
+  const submit = async () => {
+    const record = await save(true);
     if (!record) return;
-    submitForModeration(record.id);
-    navigate(user.role === 'admin' ? '/admin?tab=courses' : '/teacher?tab=courses');
+    try {
+      await courseBackend.submit(record.id);
+      await loadManagedCourses();
+      addToast({ title: 'Курс отправлен на модерацию', text: 'Опубликованная версия, если она есть, продолжает работать без изменений.', tone: 'success' });
+      navigate(user.role === 'admin' ? '/admin?tab=courses' : '/teacher?tab=courses');
+    } catch (error) {
+      addToast({ title: 'Не удалось отправить курс', text: error instanceof Error ? error.message : 'Ошибка backend', tone: 'warning' });
+    }
   };
 
-  const approve = () => {
-    const record = save(true);
-    if (!record) return;
-    approveCourse(record.id);
-    setCourse((current) => ({ ...current, status: 'published', moderationComment: undefined }));
+  const approve = async () => {
+    if (!savedId && !courseId) {
+      addToast({ title: 'Сначала сохраните курс', tone: 'warning' });
+      return;
+    }
+    const idToPublish = savedId || courseId!;
+    try {
+      await courseBackend.publish(idToPublish, 'NEW_STUDENTS_ONLY');
+      await loadManagedCourses();
+      const fresh = await courseBackend.editor(idToPublish);
+      setCourse(editorToCourse(fresh, { id: course.instructorId, name: course.instructor, avatar: course.instructorAvatar }));
+      addToast({ title: 'Курс опубликован', text: 'Новый релиз активирован. Существующие ученики остаются на своей версии.', tone: 'success' });
+    } catch (error) {
+      addToast({ title: 'Не удалось опубликовать курс', text: error instanceof Error ? error.message : 'Ошибка backend', tone: 'warning' });
+    }
   };
 
-  const uploadCover = (event: ChangeEvent<HTMLInputElement>) => {
+  const requestChanges = async () => {
+    const idToReview = savedId || courseId;
+    if (!idToReview) return;
+    const comment = window.prompt('Что нужно исправить?', 'Уточните описание и проверьте программу курса.');
+    if (!comment) return;
+    try {
+      await courseBackend.requestChanges(idToReview, comment);
+      await loadManagedCourses();
+      setCourse((current) => ({ ...current, status: 'revision', moderationComment: comment }));
+      addToast({ title: 'Курс возвращён на доработку', text: comment, tone: 'warning' });
+    } catch (error) {
+      addToast({ title: 'Не удалось вернуть курс', text: error instanceof Error ? error.message : 'Ошибка backend', tone: 'warning' });
+    }
+  };
+
+  const uploadCover = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => patch('cover', String(reader.result));
-    reader.readAsDataURL(file);
+    try {
+      const uploaded = await api.media.upload(file, 'IMAGE');
+      setCourse((current) => ({ ...current, coverAssetId: uploaded.assetId, cover: uploaded.url }));
+      addToast({ title: 'Обложка загружена', text: 'Файл сохранён в S3/MinIO и будет привязан к версии курса после сохранения.', tone: 'success' });
+    } catch (error) {
+      addToast({ title: 'Не удалось загрузить обложку', text: error instanceof Error ? error.message : 'Ошибка S3/MinIO', tone: 'warning' });
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const addModule = () => patch('modules', [...course.modules, { id: id('module'), title: `Модуль ${course.modules.length + 1}`, description: '', lessons: [] }]);
@@ -483,7 +581,13 @@ export function CourseEditorPage() {
     updateLesson(moduleId, lesson.id, { blocks: [...lesson.blocks, block], test: lesson.test });
   };
   const updateBlock = (moduleId: string, lesson: Lesson, blockId: string, data: Partial<LessonBlock>) => updateLesson(moduleId, lesson.id, { blocks: lesson.blocks.map((block) => block.id === blockId ? { ...block, ...data } : block) });
-  const removeBlock = (moduleId: string, lesson: Lesson, blockId: string) => updateLesson(moduleId, lesson.id, { blocks: lesson.blocks.filter((block) => block.id !== blockId) });
+  const removeBlock = (moduleId: string, lesson: Lesson, blockId: string) => {
+    const removed = lesson.blocks.find((block) => block.id === blockId);
+    updateLesson(moduleId, lesson.id, {
+      blocks: lesson.blocks.filter((block) => block.id !== blockId),
+      ...(removed?.type === 'test' ? { test: undefined } : {})
+    });
+  };
   const moveBlock = (moduleId: string, lesson: Lesson, blockId: string, direction: -1 | 1) => {
     const index = lesson.blocks.findIndex((block) => block.id === blockId);
     const target = index + direction;
@@ -559,17 +663,26 @@ export function CourseEditorPage() {
     updateLesson(moduleId, lesson.id, { blocks: [...lesson.blocks, cloneBlock(payload.data)] });
   };
 
-  const appendFilesToLesson = (moduleId: string, lesson: Lesson, files: File[]) => {
+  const appendFilesToLesson = async (moduleId: string, lesson: Lesson, files: File[]) => {
     if (!files.length) return;
-    const blocks = files.map(lessonBlockFromFile);
-    updateLesson(moduleId, lesson.id, { blocks: [...lesson.blocks, ...blocks] });
-    addToast({ title: 'Материалы добавлены', text: `${files.length} файл(а/ов) автоматически распознаны по формату.`, tone: 'success' });
+    addToast({ title: 'Загрузка материалов', text: `Отправляем ${files.length} файл(а/ов) в S3/MinIO…`, tone: 'info' });
+    try {
+      const blocks = await Promise.all(files.map(async (file) => {
+        const block = lessonBlockFromFile(file);
+        const uploaded = await api.media.upload(file, assetKindForBlock(block.type));
+        return { ...block, assetId: uploaded.assetId, url: uploaded.url };
+      }));
+      updateLesson(moduleId, lesson.id, { blocks: [...lesson.blocks, ...blocks] });
+      addToast({ title: 'Материалы загружены', text: `${files.length} файл(а/ов) сохранены в S3/MinIO.`, tone: 'success' });
+    } catch (error) {
+      addToast({ title: 'Не удалось загрузить материалы', text: error instanceof Error ? error.message : 'Ошибка загрузки', tone: 'warning' });
+    }
   };
   const handleLessonPaste = (event: ReactClipboardEvent<HTMLDivElement>, moduleId: string, lesson: Lesson) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length) {
       event.preventDefault();
-      appendFilesToLesson(moduleId, lesson, files);
+      void appendFilesToLesson(moduleId, lesson, files);
       return;
     }
     const text = event.clipboardData.getData('text/plain');
@@ -616,9 +729,9 @@ export function CourseEditorPage() {
         <Link to={isAdmin ? '/admin?tab=courses' : '/teacher?tab=courses'} className="editor-back"><ArrowLeft size={17} /> К списку курсов</Link>
         <div className="editor-top-actions">
           <Badge tone={course.status === 'published' ? 'green' : course.status === 'moderation' ? 'amber' : course.status === 'revision' ? 'red' : 'neutral'}>{statusLabel(course.status)}</Badge>
-          <Button variant="secondary" icon={<Save size={17} />} onClick={() => save()}>Сохранить</Button>
-          {!isAdmin ? <Button icon={<Send size={17} />} onClick={submit}>На модерацию</Button> : null}
-          {isAdmin && course.status !== 'published' ? <Button icon={<CheckCircle2 size={17} />} onClick={approve}>Подтвердить и опубликовать</Button> : null}
+          <Button variant="secondary" icon={<Save size={17} />} disabled={saving || course.status === 'moderation'} onClick={() => void save()}>{saving ? 'Сохраняем…' : 'Сохранить'}</Button>
+          {course.status !== 'moderation' && course.status !== 'published' ? <Button icon={<Send size={17} />} onClick={() => void submit()}>На модерацию</Button> : null}
+          {isAdmin && course.status === 'moderation' ? <Button icon={<CheckCircle2 size={17} />} onClick={() => void approve()}>Подтвердить и опубликовать</Button> : null}
         </div>
       </div>
 
@@ -636,10 +749,12 @@ export function CourseEditorPage() {
               <label className="full"><span>Полное описание</span><div className="voice-field voice-field--textarea"><textarea rows={7} value={course.description} onChange={(event) => patch('description', event.target.value)} /><VoiceInputButton value={course.description} onChange={(value) => patch('description', value)} /></div></label>
               <label><span>Уровень</span><input value={course.level} onChange={(event) => patch('level', event.target.value)} placeholder="Например: A1, A2–B1, Beginner" /></label>
               <label><span>Категория</span><input value={course.category} onChange={(event) => patch('category', event.target.value)} /></label>
-              {isAdmin ? <label><span>Преподаватель</span><select value={course.instructorId ?? ''} onChange={(event) => { const teacher = instructors.find((item) => item.id === event.target.value); if (teacher) setCourse((current) => ({ ...current, instructor: teacher.name, instructorAvatar: teacher.avatar, instructorId: teacher.id, ownerId: teacher.id })); }}>{instructors.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</select></label> : <label><span>Преподаватель</span><input value={course.instructor} readOnly /></label>}
-              <label><span>Цена, ₽</span><input type="number" min="0" value={course.price} onChange={(event) => patch('price', Number(event.target.value))} /></label>
-              <label><span>Старая цена, ₽</span><input type="number" min="0" value={course.oldPrice ?? ''} onChange={(event) => patch('oldPrice', event.target.value ? Number(event.target.value) : undefined)} /></label>
+              <label><span>Преподаватель</span><input value={course.instructor} readOnly /><small>Владелец курса определяется backend. Переназначение владельца добавим отдельной административной операцией.</small></label>
+              <label className="full"><span>Режим доступа</span><select value={course.accessMode === 'managed' ? `managed-${course.managedKind ?? 'individual'}` : (course.accessMode ?? 'public-sale')} onChange={(event) => { const value = event.target.value; if (value === 'managed-individual' || value === 'managed-group') { patch('accessMode', 'managed'); patch('managedKind', value === 'managed-group' ? 'group' : 'individual'); patch('price', 0); patch('oldPrice', undefined); } else { patch('accessMode', value as Course['accessMode']); } }}><option value="public-sale">Публичный — продажа в каталоге</option><option value="public-free">Публичный — бесплатная запись</option><option value="managed-individual">Индивидуальный учебный курс — доступ по списку</option><option value="managed-group">Групповой учебный курс — доступ по списку</option></select><small>{course.accessMode === 'managed' ? course.managedKind === 'group' ? 'Закрытая программа для групповых занятий. Цена отсутствует; преподаватель или администратор открывает и закрывает доступ конкретным ученикам.' : 'Закрытая программа для индивидуальных занятий. Цена отсутствует; преподаватель или администратор открывает и закрывает доступ конкретному ученику.' : course.accessMode === 'public-free' ? 'Курс виден в каталоге, ученик записывается бесплатно без платёжного заказа.' : 'Курс виден в каталоге и доступ выдаётся после оплаты.'}</small></label>
+              <label><span>Цена, ₽</span><input type="number" min="0" value={course.accessMode === 'managed' ? 0 : course.price} disabled={course.accessMode !== 'public-sale'} onChange={(event) => patch('price', Number(event.target.value))} /></label>
+              <label><span>Старая цена, ₽</span><input type="number" min="0" value={course.accessMode === 'managed' ? '' : (course.oldPrice ?? '')} disabled={course.accessMode !== 'public-sale'} onChange={(event) => patch('oldPrice', event.target.value ? Number(event.target.value) : undefined)} /></label>
               <label><span>Длительность</span><input value={course.duration} onChange={(event) => patch('duration', event.target.value)} /></label>
+              <label><span>Дедлайн прохождения</span><input type="datetime-local" min={editorDateTimeBounds().min} max={editorDateTimeBounds().max} value={course.completionDueAt ? toLocalInput(course.completionDueAt) : ''} onChange={(event) => { if (!event.target.value) patch('completionDueAt', undefined); else { const next = safeLocalDateTimeToIso(event.target.value); if (next) patch('completionDueAt', next); } }} /><small>Если указан, ученику придут напоминания за сутки и за 2 часа.</small></label>
               <label><span>URL / slug</span><input value={course.slug} onChange={(event) => patch('slug', slugify(event.target.value))} placeholder="создастся автоматически" /></label>
               <label className="full"><span>Теги через запятую</span><input value={tagsInput} onChange={(event) => { const value = event.target.value; setTagsInput(value); patch('tags', value.split(',').map((tag) => tag.trim()).filter(Boolean)); }} placeholder="Разговорный, путешествия, A2" /></label>
               <label className="full"><span>Результаты курса — по одному в строке</span><textarea rows={5} value={course.outcomes.join('\n')} onChange={(event) => patch('outcomes', event.target.value.split('\n').map((value) => value.trim()).filter(Boolean))} /></label>
@@ -648,8 +763,8 @@ export function CourseEditorPage() {
           <Card className="editor-panel cover-editor-card">
             <header><div><h2>Обложка</h2><p>Рекомендуемое соотношение 16:10.</p></div></header>
             <div className="course-cover-preview"><img src={course.cover} alt="Обложка курса" /></div>
-            <label className="upload-dropzone"><Upload size={22} /><strong>Загрузить изображение</strong><span>PNG, JPG, WebP</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadCover} /></label>
-            <div className="price-preview"><span>Цена в каталоге</span><strong>{formatMoney(course.price)}</strong>{course.oldPrice ? <s>{formatMoney(course.oldPrice)}</s> : null}</div>
+            <label className="upload-dropzone"><Upload size={22} /><strong>Загрузить изображение</strong><span>PNG, JPG, WebP</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void uploadCover(event)} /></label>
+            <div className="price-preview"><span>{course.accessMode === 'managed' ? 'Доступ' : 'Цена в каталоге'}</span><strong>{course.accessMode === 'managed' ? (course.managedKind === 'group' ? 'Групповой · по списку' : 'Индивидуальный · по списку') : course.accessMode === 'public-free' ? 'Бесплатно' : formatMoney(course.price)}</strong>{course.accessMode === 'public-sale' && course.oldPrice ? <s>{formatMoney(course.oldPrice)}</s> : null}</div>
           </Card>
         </div>
       ) : null}
@@ -670,7 +785,7 @@ export function CourseEditorPage() {
                 </header>
                 <div data-editor-drop-kind="lesson-container" data-module-id={module.id} className={`editor-lesson-list ${dropTarget?.kind === 'lesson' && dropTarget.moduleId === module.id && dropTarget.edge === 'end' ? 'is-drop-end-target' : ''}`}>
                   {module.lessons.map((lesson, lessonIndex) => (
-                    <article data-editor-drop-kind="lesson" data-module-id={module.id} data-lesson-id={lesson.id} className={`editor-lesson ${collapsedLessons.has(lesson.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'lesson' && dragItem.lessonId === lesson.id ? 'is-dragging' : ''} ${dropTarget?.kind === 'lesson' && dropTarget.lessonId === lesson.id ? `is-drop-target is-drop-${dropTarget.edge}` : ''}`} key={lesson.id} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); } }}>
+                    <article data-editor-drop-kind="lesson" data-module-id={module.id} data-lesson-id={lesson.id} className={`editor-lesson ${collapsedLessons.has(lesson.id) ? 'is-collapsed' : ''} ${dragItem?.kind === 'lesson' && dragItem.lessonId === lesson.id ? 'is-dragging' : ''} ${dropTarget?.kind === 'lesson' && dropTarget.lessonId === lesson.id ? `is-drop-target is-drop-${dropTarget.edge}` : ''}`} key={lesson.id} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); void appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); } }}>
                       <div className="editor-lesson__head">
                         <span className="editor-drag-handle" role="button" tabIndex={0} onPointerDown={(event) => beginPointerDrag(event, { kind: 'lesson', moduleId: module.id, lessonId: lesson.id })} onPointerMove={movePointerDrag} onPointerUp={finishPointerDrag} onPointerCancel={cancelPointerDrag} title="Зажмите и перетащите урок" aria-label="Перетащить урок"><GripVertical size={17}/></span>
                         <span>{moduleIndex + 1}.{lessonIndex + 1}</span>
@@ -705,7 +820,7 @@ export function CourseEditorPage() {
                           </div>
                         ))}
                       </div>
-                      <div className="lesson-dropzone" tabIndex={0} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); } }} onPaste={(event) => handleLessonPaste(event, module.id, lesson)}><Upload size={18}/><div><strong>Перетащите материалы в урок</strong><span>Фото, аудио, видео, PDF и другие файлы определяются автоматически. Сюда же можно вставить файл или текст из буфера обмена.</span></div></div>
+                      <div className="lesson-dropzone" tabIndex={0} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); void appendFilesToLesson(module.id, lesson, Array.from(event.dataTransfer.files)); } }} onPaste={(event) => handleLessonPaste(event, module.id, lesson)}><Upload size={18}/><div><strong>Перетащите материалы в урок</strong><span>Фото, аудио, видео, PDF и другие файлы определяются автоматически. Сюда же можно вставить файл или текст из буфера обмена.</span></div></div>
                     </article>
                   ))}
                   {module.lessons.length === 0 ? <button className="inline-empty-action" onClick={() => addLesson(module.id)}><Plus size={16} /> Добавить первый урок</button> : null}
@@ -725,7 +840,7 @@ export function CourseEditorPage() {
               <div className="schedule-editor-row" key={item.id}>
                 <select value={item.type} onChange={(event) => updateScheduleItem(item.id, { type: event.target.value as CourseScheduleItem['type'] })}><option value="lesson">Урок</option><option value="conference">Видеоконференция</option></select>
                 <input value={item.title} onChange={(event) => updateScheduleItem(item.id, { title: event.target.value })} placeholder="Название события" />
-                <input type="datetime-local" value={toLocalInput(item.startAt)} onChange={(event) => updateScheduleItem(item.id, { startAt: new Date(event.target.value).toISOString() })} />
+                <input type="datetime-local" min={editorDateTimeBounds().min} max={editorDateTimeBounds().max} value={toLocalInput(item.startAt)} onChange={(event) => { const next = event.target.value ? safeLocalDateTimeToIso(event.target.value) : null; if (next) updateScheduleItem(item.id, { startAt: next }); }} />
                 <label className="compact-number"><input type="number" value={item.duration} min="1" onChange={(event) => updateScheduleItem(item.id, { duration: Number(event.target.value) })} /><span>мин</span></label>
                 {item.type === 'lesson' ? <select value={item.lessonId ?? ''} onChange={(event) => updateScheduleItem(item.id, { lessonId: event.target.value || undefined })}><option value="">Выберите урок</option>{allLessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}</select> : <span className="conference-hint"><Video size={16}/> Комната будет создана для участников курса</span>}
                 <button className="danger-icon" onClick={() => patch('schedule', (course.schedule ?? []).filter((current) => current.id !== item.id))}><Trash2 size={16}/></button>
@@ -742,7 +857,7 @@ export function CourseEditorPage() {
             <header><div><h2>Готовность к публикации</h2><p>Проверьте обязательные элементы перед отправкой.</p></div></header>
             <PublicationCheck ok={Boolean(course.title)} text="Название курса заполнено" />
             <PublicationCheck ok={Boolean(course.cover)} text="Обложка добавлена" />
-            <PublicationCheck ok={course.price >= 0} text="Цена указана" />
+            <PublicationCheck ok={course.accessMode !== 'public-sale' || course.price >= 0} text={course.accessMode === 'managed' ? (course.managedKind === 'group' ? 'Групповой доступ по списку настроен' : 'Индивидуальный доступ по списку настроен') : course.accessMode === 'public-free' ? 'Бесплатная запись настроена' : 'Цена указана'} />
             <PublicationCheck ok={course.modules.length > 0} text="Есть хотя бы один модуль" />
             <PublicationCheck ok={allLessons.length > 0} text="Есть хотя бы один урок" />
             <PublicationCheck ok={course.description.length > 40} text="Добавлено подробное описание" />
@@ -751,8 +866,8 @@ export function CourseEditorPage() {
             <header><div><h2>Модерация</h2><p>Преподаватель отправляет курс, администратор принимает решение.</p></div></header>
             <div className="moderation-status"><Badge tone={course.status === 'published' ? 'green' : course.status === 'revision' ? 'red' : course.status === 'moderation' ? 'amber' : 'neutral'}>{statusLabel(course.status)}</Badge><span>{course.updatedAt ? `Обновлено ${new Date(course.updatedAt).toLocaleString('ru-RU')}` : 'Новый курс'}</span></div>
             {course.moderationComment ? <div className="moderation-comment"><strong>Комментарий администратора</strong><p>{course.moderationComment}</p></div> : null}
-            {!isAdmin ? <Button icon={<Send size={17}/>} onClick={submit}>Отправить на модерацию</Button> : null}
-            {isAdmin ? <div className="moderation-admin-actions"><Button icon={<CheckCircle2 size={17}/>} onClick={approve}>Подтвердить публикацию</Button><Button variant="danger" icon={<XCircle size={17}/>} onClick={() => { const comment = window.prompt('Что нужно исправить?', 'Уточните описание и проверьте программу курса.'); if (comment) { const record = save(true); if (record) { requestRevision(record.id, comment); setCourse((current) => ({ ...current, status: 'revision', moderationComment: comment })); } } }}>Вернуть на доработку</Button></div> : null}
+            {course.status !== 'moderation' && course.status !== 'published' ? <Button icon={<Send size={17}/>} onClick={() => void submit()}>Отправить на модерацию</Button> : null}
+            {isAdmin && course.status === 'moderation' ? <div className="moderation-admin-actions"><Button icon={<CheckCircle2 size={17}/>} onClick={() => void approve()}>Подтвердить публикацию</Button><Button variant="danger" icon={<XCircle size={17}/>} onClick={() => void requestChanges()}>Вернуть на доработку</Button></div> : null}
           </Card>
         </div>
       ) : null}
@@ -769,34 +884,43 @@ function BlockEditor({ moduleId, lesson, block, updateBlock, updateTest, addQues
   addQuestion: (moduleId: string, lesson: Lesson) => void;
   updateQuestion: (moduleId: string, lesson: Lesson, questionId: string, data: Partial<Question>) => void;
 }) {
-  const upload = (event: ChangeEvent<HTMLInputElement>) => {
+  const addToast = useAppStore((state) => state.addToast);
+  useEffect(() => {
+    let cancelled = false;
+    if (!block.assetId || block.url) return () => { cancelled = true; };
+    void api.media.url(block.assetId).then((asset) => {
+      if (!cancelled) updateBlock(moduleId, lesson, block.id, { url: asset.url, fileName: block.fileName || asset.fileName });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [block.assetId, block.url, block.fileName, block.id, moduleId, lesson.id]);
+
+  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    updateBlock(moduleId, lesson, block.id, { fileName: file.name, url: URL.createObjectURL(file) });
+    try {
+      const uploaded = await api.media.upload(file, assetKindForBlock(block.type));
+      updateBlock(moduleId, lesson, block.id, { fileName: file.name, assetId: uploaded.assetId, url: uploaded.url });
+      addToast({ title: 'Файл загружен', text: file.name, tone: 'success' });
+    } catch (error) {
+      addToast({ title: 'Загрузка не выполнена', text: error instanceof Error ? error.message : 'Ошибка S3/MinIO', tone: 'warning' });
+    } finally {
+      event.target.value = '';
+    }
   };
 
   if (block.type === 'heading') return <div className="voice-field"><input className="block-wide-input" value={block.title ?? ''} onChange={(event) => updateBlock(moduleId, lesson, block.id, { title: event.target.value })} placeholder="Текст заголовка" /><VoiceInputButton value={block.title ?? ''} onChange={(value) => updateBlock(moduleId, lesson, block.id, { title: value })} /></div>;
   if (block.type === 'text') {
-    const style = block.textStyle ?? { fontSize: 'md', align: 'left', bold: false, italic: false, underline: false, listStyle: 'none' };
-    const patchStyle = (data: Partial<NonNullable<LessonBlock['textStyle']>>) => updateBlock(moduleId, lesson, block.id, { textStyle: { ...style, ...data } });
+    const richHtml = block.richTextHtml ?? legacyTextToRichHtml(block.content ?? '', block.textStyle);
     return (
-      <div className="rich-text-block-editor">
-        <div className="rich-text-toolbar" aria-label="Форматирование текста">
-          <select value={style.fontSize ?? 'md'} onChange={(event) => patchStyle({ fontSize: event.target.value as NonNullable<LessonBlock['textStyle']>['fontSize'] })} aria-label="Размер текста">
-            <option value="sm">Мелкий</option><option value="md">Обычный</option><option value="lg">Крупный</option><option value="xl">Очень крупный</option>
-          </select>
-          <button type="button" className={style.bold ? 'active' : ''} onClick={() => patchStyle({ bold: !style.bold })} aria-label="Полужирный"><strong>B</strong></button>
-          <button type="button" className={style.italic ? 'active' : ''} onClick={() => patchStyle({ italic: !style.italic })} aria-label="Курсив"><em>I</em></button>
-          <button type="button" className={style.underline ? 'active' : ''} onClick={() => patchStyle({ underline: !style.underline })} aria-label="Подчёркнутый"><u>U</u></button>
-          <select value={style.align ?? 'left'} onChange={(event) => patchStyle({ align: event.target.value as NonNullable<LessonBlock['textStyle']>['align'] })} aria-label="Выравнивание">
-            <option value="left">По левому краю</option><option value="center">По центру</option><option value="right">По правому краю</option>
-          </select>
-          <select value={style.listStyle ?? 'none'} onChange={(event) => patchStyle({ listStyle: event.target.value as NonNullable<LessonBlock['textStyle']>['listStyle'] })} aria-label="Тип списка">
-            <option value="none">Обычный текст</option><option value="bullet">Маркированный список</option><option value="numbered">Нумерованный список</option>
-          </select>
-        </div>
-        <div className="voice-field voice-field--textarea"><textarea className="block-wide-textarea" rows={7} value={block.content ?? ''} onChange={(event) => updateBlock(moduleId, lesson, block.id, { content: event.target.value })} placeholder="Введите текст. Для списка размещайте каждый пункт с новой строки…" /><VoiceInputButton value={block.content ?? ''} onChange={(value) => updateBlock(moduleId, lesson, block.id, { content: value })} /></div>
-        <small>Можно менять размер, начертание, выравнивание и превращать строки в маркированный или нумерованный список.</small>
+      <div className="rich-text-block-editor rich-text-block-editor--selection">
+        <RichTextEditor
+          html={richHtml}
+          plainText={block.content ?? ''}
+          onChange={({ html, plainText }) => updateBlock(moduleId, lesson, block.id, {
+            content: plainText,
+            richTextHtml: html
+          })}
+        />
       </div>
     );
   }
@@ -805,7 +929,7 @@ function BlockEditor({ moduleId, lesson, block, updateBlock, updateTest, addQues
   if (block.type === 'audio') return <AudioAssetEditor block={block} onChange={(data) => updateBlock(moduleId, lesson, block.id, data)} />;
   if (block.type === 'video' || block.type === 'file' || block.type === 'image') return (
     <div className="asset-block-editor">
-      <label className="upload-inline"><Upload size={17}/><span>{block.fileName ?? `Выбрать ${block.type === 'video' ? 'видеоролик' : block.type === 'image' ? 'изображение' : 'файл'}`}</span><input type="file" accept={block.type === 'video' ? 'video/*' : block.type === 'image' ? 'image/*' : undefined} onChange={upload}/></label>
+      <label className="upload-inline"><Upload size={17}/><span>{block.fileName ?? `Выбрать ${block.type === 'video' ? 'видеоролик' : block.type === 'image' ? 'изображение' : 'файл'}`}</span><input type="file" accept={block.type === 'video' ? 'video/*' : block.type === 'image' ? 'image/*' : undefined} onChange={(event) => void upload(event)}/></label>
       <input value={block.title ?? ''} onChange={(event) => updateBlock(moduleId, lesson, block.id, { title: event.target.value })} placeholder="Подпись / название материала" />
       {block.type === 'image' && block.url ? <img className="asset-editor-image-preview" src={block.url} alt={block.title || block.fileName || 'Предпросмотр изображения'} /> : null}
       {block.type === 'video' && block.url ? <video className="asset-editor-video-preview" controls preload="metadata" src={block.url} /> : null}
@@ -833,6 +957,7 @@ function BlockEditor({ moduleId, lesson, block, updateBlock, updateTest, addQues
         <label className="full"><span>Инструкция</span><div className="voice-field voice-field--textarea"><textarea rows={4} value={a.instructions} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, instructions: event.target.value } })}/><VoiceInputButton value={a.instructions} onChange={(value) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, instructions: value } })}/></div></label>
         <label><span>Проверка</span><select value={a.gradingMode} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, gradingMode: event.target.value as 'auto' | 'manual' } })}><option value="manual">Ручная преподавателем</option><option value="auto">Автоматическая</option></select></label>
         <label><span>Максимум баллов</span><input type="number" min="1" value={a.maxScore} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, maxScore: Number(event.target.value) } })}/></label>
+        <label><span>Сдать до</span><input type="datetime-local" min={editorDateTimeBounds().min} max={editorDateTimeBounds().max} value={a.dueAt ? toLocalInput(a.dueAt) : ''} onChange={(event) => { if (!event.target.value) updateBlock(moduleId, lesson, block.id, { assignment: { ...a, dueAt: undefined } }); else { const next = safeLocalDateTimeToIso(event.target.value); if (next) updateBlock(moduleId, lesson, block.id, { assignment: { ...a, dueAt: next } }); } }}/><small>Если указано, ученику придут напоминания за сутки и за 2 часа.</small></label>
         {a.gradingMode === 'auto' ? <label className="full"><span>Эталонный ответ для автопроверки</span><textarea rows={3} value={a.autoAnswer ?? ''} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, autoAnswer: event.target.value } })}/></label> : null}
         <label className="check-inline"><input type="checkbox" checked={a.allowTextAnswer} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, allowTextAnswer: event.target.checked } })}/> Текстовый ответ</label>
         <label className="check-inline"><input type="checkbox" checked={a.allowFileUpload} onChange={(event) => updateBlock(moduleId, lesson, block.id, { assignment: { ...a, allowFileUpload: event.target.checked } })}/> Прикрепление файла</label>
@@ -874,6 +999,7 @@ function BlockEditor({ moduleId, lesson, block, updateBlock, updateTest, addQues
 
 
 function AudioAssetEditor({ block, onChange }: { block: LessonBlock; onChange: (data: Partial<LessonBlock>) => void }) {
+  const addToast = useAppStore((state) => state.addToast);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -887,10 +1013,18 @@ function AudioAssetEditor({ block, onChange }: { block: LessonBlock; onChange: (
     streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
 
-  const uploadAudio = (event: ChangeEvent<HTMLInputElement>) => {
+  const uploadAudio = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    onChange({ fileName: file.name, url: URL.createObjectURL(file), title: block.title || file.name.replace(/\.[^.]+$/, '') });
+    try {
+      const uploaded = await api.media.upload(file, 'AUDIO');
+      onChange({ fileName: file.name, assetId: uploaded.assetId, url: uploaded.url, title: block.title || file.name.replace(/\.[^.]+$/, '') });
+      addToast({ title: 'Аудио загружено', text: file.name, tone: 'success' });
+    } catch (error) {
+      addToast({ title: 'Аудио не загружено', text: error instanceof Error ? error.message : 'Ошибка S3/MinIO', tone: 'warning' });
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const startRecording = async () => {
@@ -906,19 +1040,27 @@ function AudioAssetEditor({ block, onChange }: { block: LessonBlock; onChange: (
       chunksRef.current = [];
       setElapsed(0);
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const mime = recorder.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mime });
         const extension = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : 'webm';
         const fileName = `audio-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
-        onChange({ url: URL.createObjectURL(blob), fileName, title: block.title || 'Аудиодорожка' });
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        recorderRef.current = null;
-        chunksRef.current = [];
-        setRecording(false);
-        if (timerRef.current !== null) window.clearInterval(timerRef.current);
-        timerRef.current = null;
+        try {
+          const file = new File([blob], fileName, { type: mime });
+          const uploaded = await api.media.upload(file, 'AUDIO');
+          onChange({ assetId: uploaded.assetId, url: uploaded.url, fileName, title: block.title || 'Аудиодорожка' });
+          addToast({ title: 'Запись сохранена', text: 'Аудиодорожка загружена в S3/MinIO.', tone: 'success' });
+        } catch (error) {
+          addToast({ title: 'Запись не сохранена', text: error instanceof Error ? error.message : 'Ошибка загрузки', tone: 'warning' });
+        } finally {
+          stream.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+          recorderRef.current = null;
+          chunksRef.current = [];
+          setRecording(false);
+          if (timerRef.current !== null) window.clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
       };
       recorder.start(250);
       setRecording(true);
@@ -938,7 +1080,7 @@ function AudioAssetEditor({ block, onChange }: { block: LessonBlock; onChange: (
   return (
     <div className="asset-block-editor audio-recorder-editor">
       <div className="audio-recorder-actions">
-        <label className="upload-inline"><Upload size={17}/><span>{block.fileName ?? 'Загрузить аудиофайл'}</span><input type="file" accept="audio/*" onChange={uploadAudio}/></label>
+        <label className="upload-inline"><Upload size={17}/><span>{block.fileName ?? 'Загрузить аудиофайл'}</span><input type="file" accept="audio/*" onChange={(event) => void uploadAudio(event)}/></label>
         <button type="button" className={`audio-record-button ${recording ? 'is-recording' : ''}`} onClick={recording ? stopRecording : startRecording}>{recording ? <MicOff size={17}/> : <Mic size={17}/>}<span>{recording ? `Остановить запись · ${time}` : 'Записать с микрофона'}</span></button>
       </div>
       <input value={block.title ?? ''} onChange={(event) => onChange({ title: event.target.value })} placeholder="Название аудиодорожки" />
@@ -1058,7 +1200,27 @@ function statusLabel(status: Course['status']) {
 }
 
 function toLocalInput(value: string) {
+  if (!value) return '';
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
   const offset = date.getTimezoneOffset();
   return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+}
+
+function editorDateTimeBounds() {
+  const now = new Date();
+  const local = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const max = new Date(now);
+  max.setFullYear(max.getFullYear() + 3);
+  return { min: local(now), max: local(max) };
+}
+
+function safeLocalDateTimeToIso(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const max = new Date(now);
+  max.setFullYear(max.getFullYear() + 3);
+  if (!Number.isFinite(date.getTime())) return null;
+  if (date < new Date(now.getTime() - 5 * 60_000) || date > max) return null;
+  return date.toISOString();
 }

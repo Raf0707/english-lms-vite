@@ -26,6 +26,9 @@ import { Badge, Button, Card } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
 import type { LessonBlock } from '../types';
 import { classNames } from '../utils/format';
+import { sanitizeRichTextHtml } from '../utils/richText';
+import { SAFE_STUDENT_ATTACHMENT_ACCEPT, validateAttachmentForRole } from '../utils/fileUploadPolicy';
+import { api } from '../services/api';
 
 export function LessonPage() {
   const courses = useAppStore((state) => state.courses);
@@ -38,6 +41,8 @@ export function LessonPage() {
   const [speakingKey, setSpeakingKey] = useState<string | null>(null);
   const course = courses.find((item) => item.id === courseId);
   const enrollment = useAppStore((state) => state.enrollments.find((item) => item.courseId === courseId));
+  const learningStatus = useAppStore((state) => state.learningStatus);
+  const loadEnrollments = useAppStore((state) => state.loadEnrollments);
   const completeLesson = useAppStore((state) => state.completeLesson);
   const addToast = useAppStore((state) => state.addToast);
 
@@ -47,7 +52,14 @@ export function LessonPage() {
   const previous = flatLessons[currentIndex - 1];
   const next = flatLessons[currentIndex + 1];
   const videoBlock = current?.lesson.blocks.find((block) => block.type === 'video');
+  const [primaryVideoUrl, setPrimaryVideoUrl] = useState<string | null>(videoBlock?.url ?? null);
   const hasTestBlock = current?.lesson.blocks.some((block) => block.type === 'test');
+
+  useEffect(() => {
+    if ((!course || !enrollment) && (learningStatus === 'idle' || learningStatus === 'error')) {
+      void loadEnrollments().catch(() => undefined);
+    }
+  }, [course, enrollment, learningStatus, loadEnrollments]);
 
   useEffect(() => {
     setSpeakingKey(null);
@@ -55,6 +67,16 @@ export function LessonPage() {
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     };
   }, [current?.lesson.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPrimaryVideoUrl(videoBlock?.url ?? null);
+    if (!videoBlock?.assetId || videoBlock.url) return () => { cancelled = true; };
+    void api.media.url(videoBlock.assetId).then((asset) => {
+      if (!cancelled) setPrimaryVideoUrl(asset.url);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [videoBlock?.assetId, videoBlock?.url, current?.lesson.id]);
 
   const speakText = (text: string, key: string) => {
     const clean = text.trim();
@@ -91,8 +113,12 @@ export function LessonPage() {
     setSelectedSpeechText(text.slice(0, 1200));
   };
 
+  if ((!course || !enrollment) && learningStatus === 'loading') {
+    return <AppLayout title="Загружаем курс"><div className="not-found-simple"><h2>Получаем ваш доступ к курсу…</h2><p>Проверяем Enrollment и закреплённую за ним версию курса.</p></div></AppLayout>;
+  }
+
   if (!course || !current || !enrollment) {
-    return <AppLayout title="Урок недоступен"><div className="not-found-simple"><h2>Урок не найден или у вас нет доступа.</h2><Link to="/app/learning"><Button>К моим курсам</Button></Link></div></AppLayout>;
+    return <AppLayout title="Урок недоступен"><div className="not-found-simple"><h2>Урок не найден или у вас нет доступа.</h2><p>{learningStatus === 'error' ? 'Не удалось проверить доступ на backend.' : 'Для этого курса нет активного Enrollment.'}</p><div style={{display:'flex',gap:8,justifyContent:'center'}}>{learningStatus === 'error' ? <Button onClick={() => void loadEnrollments().catch(() => undefined)}>Проверить ещё раз</Button> : null}<Link to="/app/learning"><Button variant="secondary">К моим курсам</Button></Link></div></div></AppLayout>;
   }
 
   const completed = enrollment.completedLessonIds.includes(current.lesson.id);
@@ -168,7 +194,7 @@ export function LessonPage() {
                   onPlay={() => setVideoPlayed(true)}
                   preload="metadata"
                 >
-                  <source src={videoBlock?.url ?? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4'} type="video/mp4" />
+                  <source src={primaryVideoUrl ?? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4'} type={videoBlock?.fileName?.endsWith('.webm') ? 'video/webm' : 'video/mp4'} />
                   Ваш браузер не поддерживает видео.
                 </video>
                 {!videoPlayed ? <div className="video-hint"><Play size={18} /> Пробный видеоматериал</div> : null}
@@ -185,10 +211,7 @@ export function LessonPage() {
                   if (block.type === 'quote') return <div className="lesson-speakable" key={block.id}><blockquote>{block.content}</blockquote><SpeakTextButton text={block.content ?? ''} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
                   if (block.type === 'callout') return <div className="lesson-speakable" key={block.id}><div className="lesson-callout"><Volume2 size={21} /><div><strong>{block.title}</strong><p>{block.content}</p></div></div><SpeakTextButton text={`${block.title ?? ''}. ${block.content ?? ''}`} speechKey={block.id} speakingKey={speakingKey} onSpeak={speakText}/></div>;
                   if (block.type === 'table' && block.table) return <div className="lesson-table-wrap" key={block.id}><table><thead><tr>{block.table.headers.map((header, index) => <th key={`${block.id}-h-${index}`}>{header}</th>)}</tr></thead><tbody>{block.table.rows.map((row, rowIndex) => <tr key={`${block.id}-r-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${block.id}-${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table></div>;
-                  if (block.type === 'video') return block.url ? <div className="lesson-inline-video" key={block.id}><video controls src={block.url}/>{block.title ? <strong>{block.title}</strong> : null}</div> : null;
-                  if (block.type === 'image') return block.url ? <figure className="lesson-inline-image" key={block.id}><img src={block.url} alt={block.title ?? ''}/>{block.title ? <figcaption>{block.title}</figcaption> : null}</figure> : null;
-                  if (block.type === 'audio') return block.url ? <div className="lesson-inline-audio" key={block.id}><strong>{block.title ?? block.fileName ?? 'Аудиоматериал'}</strong><audio controls src={block.url}/></div> : null;
-                  if (block.type === 'file') return <a className="lesson-file-card" key={block.id} href={block.url ?? '#'} download={block.fileName}><FileText size={22}/><div><strong>{block.title ?? block.fileName ?? 'Материал к уроку'}</strong><span>{block.fileName ?? 'Файл'}</span></div><UploadCloud size={18}/></a>;
+                  if (block.type === 'video' || block.type === 'image' || block.type === 'audio' || block.type === 'file') return <LessonMediaBlock key={block.id} block={block}/>;
                   if (block.type === 'assignment' && block.assignment) return <LessonAssignmentBlock key={block.id} assignment={block.assignment} courseId={course.id} lessonId={current.lesson.id} onToast={addToast}/>;
                   if (block.type === 'conference') return <Card className="lesson-conference-card" key={block.id}><span><Video size={22}/></span><div><strong>{block.title || 'Видеоконференция'}</strong><p>{block.content || 'Живая встреча с преподавателем по расписанию курса.'}</p></div><Link to="/app/schedule"><Button size="sm">Открыть расписание</Button></Link></Card>;
                   if (block.type === 'test' && current.lesson.test) return <TestRunner key={block.id} test={current.lesson.test} onPassed={() => completeLesson(course.id, current.lesson.id)} />;
@@ -224,6 +247,37 @@ export function LessonPage() {
 }
 
 
+
+function LessonMediaBlock({ block }: { block: LessonBlock }) {
+  const [url, setUrl] = useState(block.url ?? '');
+  const [loading, setLoading] = useState(Boolean(block.assetId && !block.url));
+
+  useEffect(() => {
+    let cancelled = false;
+    setUrl(block.url ?? '');
+    if (!block.assetId || block.url) {
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+    setLoading(true);
+    void api.media.url(block.assetId).then((asset) => {
+      if (!cancelled) setUrl(asset.url);
+    }).catch(() => {
+      if (!cancelled) setUrl('');
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [block.assetId, block.url]);
+
+  if (loading) return <div className="lesson-media-loading">Загружаем материал…</div>;
+  if (!url) return <div className="lesson-media-loading lesson-media-loading--error">Материал временно недоступен</div>;
+  if (block.type === 'video') return <div className="lesson-inline-video"><video controls src={url}/>{block.title ? <strong>{block.title}</strong> : null}</div>;
+  if (block.type === 'image') return <figure className="lesson-inline-image"><img src={url} alt={block.title ?? ''}/>{block.title ? <figcaption>{block.title}</figcaption> : null}</figure>;
+  if (block.type === 'audio') return <div className="lesson-inline-audio"><strong>{block.title ?? block.fileName ?? 'Аудиоматериал'}</strong><audio controls src={url}/></div>;
+  return <a className="lesson-file-card" href={url} target="_blank" rel="noreferrer"><FileText size={22}/><div><strong>{block.title ?? block.fileName ?? 'Материал к уроку'}</strong><span>{block.fileName ?? 'Файл'}</span></div><UploadCloud size={18}/></a>;
+}
+
 function SpeakTextButton({ text, speechKey, speakingKey, onSpeak }: { text: string; speechKey: string; speakingKey: string | null; onSpeak: (text: string, key: string) => void }) {
   if (!text.trim()) return null;
   const active = speakingKey === speechKey;
@@ -231,6 +285,9 @@ function SpeakTextButton({ text, speechKey, speakingKey, onSpeak }: { text: stri
 }
 
 function LessonTextBlock({ block }: { block: LessonBlock }) {
+  if (block.richTextHtml?.trim()) {
+    return <div className="lesson-custom-text lesson-rich-text" dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(block.richTextHtml) }} />;
+  }
   const style = block.textStyle ?? {};
   const className = [
     'lesson-custom-text',
@@ -246,7 +303,6 @@ function LessonTextBlock({ block }: { block: LessonBlock }) {
   return <p className={className}>{block.content}</p>;
 }
 
-
 function LessonAssignmentBlock({ assignment, courseId, lessonId, onToast }: {
   assignment: NonNullable<import('../types').LessonBlock['assignment']>;
   courseId: string;
@@ -256,25 +312,26 @@ function LessonAssignmentBlock({ assignment, courseId, lessonId, onToast }: {
   const submitAssignment = useAppStore((state) => state.submitAssignment);
   const [answer, setAnswer] = useState('');
   const [fileName, setFileName] = useState('');
+  const [fileAssetId, setFileAssetId] = useState('');
+  const [fileUploading, setFileUploading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const submit = () => {
-    if (!answer.trim() && !fileName) {
+  const submit = async () => {
+    if (!answer.trim() && !fileAssetId) {
       onToast({ title: 'Добавьте ответ', text: 'Введите текст или прикрепите файл.', tone: 'warning' });
       return;
     }
-    if (assignment.gradingMode === 'auto' && assignment.autoAnswer) {
-      const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
-      const ok = normalize(answer) === normalize(assignment.autoAnswer);
-      if (ok) {
-        submitAssignment({ assignmentId: assignment.id, courseId, lessonId, answer, fileName: fileName || undefined, status: 'approved', score: assignment.maxScore, feedback: 'Проверено автоматически.' });
+    try {
+      const result = await submitAssignment({ assignmentId: assignment.id, courseId, lessonId, answer: answer || undefined, fileName: fileName || undefined, fileAssetId: fileAssetId || undefined, status: 'pending' });
+      if (!result) return;
+      setSubmitted(result.status !== 'revision');
+      if (result.status === 'approved') {
+        onToast({ title: 'Ответ проверен', text: result.feedback || `Начислено ${result.score ?? assignment.maxScore} баллов.`, tone: 'success' });
+      } else {
+        onToast({ title: 'Задание отправлено', text: 'Ответ сохранён на backend и появился в очереди преподавателя.', tone: 'success' });
       }
-      onToast({ title: ok ? 'Ответ принят' : 'Ответ пока неверный', text: ok ? `Начислено ${assignment.maxScore} баллов.` : 'Проверьте формулировку и попробуйте ещё раз.', tone: ok ? 'success' : 'warning' });
-      setSubmitted(ok);
-      return;
+    } catch (error) {
+      onToast({ title: 'Не удалось отправить задание', text: error instanceof Error ? error.message : 'Ошибка backend', tone: 'warning' });
     }
-    submitAssignment({ assignmentId: assignment.id, courseId, lessonId, answer: answer || undefined, fileName: fileName || undefined, status: 'pending' });
-    setSubmitted(true);
-    onToast({ title: 'Задание отправлено', text: 'Преподаватель получил его в очередь на ручную проверку.', tone: 'success' });
   };
-  return <Card className="lesson-assignment-card"><header><span><FileText size={21}/></span><div><small>{assignment.gradingMode === 'auto' ? 'Автоматическая проверка' : 'Ручная проверка преподавателем'}</small><h3>{assignment.title}</h3></div><Badge tone={submitted ? 'green' : 'neutral'}>{submitted ? 'Отправлено' : `${assignment.maxScore} баллов`}</Badge></header><p>{assignment.instructions}</p>{assignment.allowTextAnswer ? <textarea rows={5} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Введите ответ…" disabled={submitted && assignment.gradingMode === 'manual'}/> : null}{assignment.allowFileUpload ? <label className="lesson-assignment-upload"><UploadCloud size={17}/><span>{fileName || 'Прикрепить файл'}</span><input type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? '')}/></label> : null}<Button onClick={submit} disabled={submitted && assignment.gradingMode === 'manual'}>{submitted && assignment.gradingMode === 'manual' ? 'Ожидает проверки' : 'Отправить задание'}</Button></Card>;
+  return <Card className="lesson-assignment-card"><header><span><FileText size={21}/></span><div><small>{assignment.gradingMode === 'auto' ? 'Автоматическая проверка' : 'Ручная проверка преподавателем'}</small><h3>{assignment.title}</h3></div><Badge tone={submitted ? 'green' : 'neutral'}>{submitted ? 'Отправлено' : `${assignment.maxScore} баллов`}</Badge></header><p>{assignment.instructions}</p>{assignment.allowTextAnswer ? <textarea rows={5} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Введите ответ…" disabled={submitted && assignment.gradingMode === 'manual'}/> : null}{assignment.allowFileUpload ? <label className="lesson-assignment-upload"><UploadCloud size={17}/><span>{fileUploading ? 'Загружаем файл…' : fileName || 'Прикрепить файл'}</span><input type="file" accept={SAFE_STUDENT_ATTACHMENT_ACCEPT} disabled={fileUploading || (submitted && assignment.gradingMode === 'manual')} onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const policyError = validateAttachmentForRole(file, 'student'); if (policyError) { onToast({ title: 'Файл запрещён', text: policyError, tone: 'warning' }); event.currentTarget.value = ''; return; } setFileUploading(true); setFileName(file.name); void api.media.upload(file, 'FILE').then((asset) => setFileAssetId(asset.assetId)).catch((error) => { setFileAssetId(''); onToast({ title: 'Файл не загружен', text: error instanceof Error ? error.message : 'Ошибка S3/MinIO', tone: 'warning' }); }).finally(() => setFileUploading(false)); }}/></label> : null}<Button onClick={() => void submit()} disabled={fileUploading || (submitted && assignment.gradingMode === 'manual')}>{submitted && assignment.gradingMode === 'manual' ? 'Ожидает проверки' : 'Отправить задание'}</Button></Card>;
 }

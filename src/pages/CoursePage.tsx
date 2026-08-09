@@ -12,7 +12,7 @@ import {
   Users,
   Video
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PublicFooter } from '../components/PublicFooter';
@@ -20,28 +20,57 @@ import { PublicHeader } from '../components/PublicHeader';
 import { Avatar, Badge, Button, Card, Modal } from '../components/ui';
 import { useAppStore } from '../store/useAppStore';
 import { formatMoney } from '../utils/format';
+import type { Course } from '../types';
+import { courseBackend, publicCourseToCourse } from '../services/courseBackend';
+import { useCourseCoverUrl } from '../hooks/useCourseCoverUrl';
+import { api } from '../services/api';
 
 export function CoursePage() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const courses = useAppStore((state) => state.courses);
   const user = useAppStore((state) => state.user);
-  const course = useMemo(() => courses.find((item) => item.slug === slug && (
-    item.status === 'published'
-    || user?.role === 'admin'
-    || (user?.role === 'teacher' && (item.ownerId === user.id || item.instructorId === user.id))
-  )), [courses, slug, user?.id, user?.role]);
   const enrollments = useAppStore((state) => state.enrollments);
   const purchase = useAppStore((state) => state.purchaseCourse);
-  const [openModule, setOpenModule] = useState<string | null>(course?.modules[0]?.id ?? null);
+  const loadEnrollments = useAppStore((state) => state.loadEnrollments);
+  const [course, setCourse] = useState<Course | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [openModule, setOpenModule] = useState<string | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const coverUrl = useCourseCoverUrl(course?.coverAssetId, course?.cover ?? '/course-1.svg', 'public');
+
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    setLoading(true);
+    void courseBackend.publicBySlug(slug)
+      .then((result) => {
+        if (cancelled) return;
+        const mapped = publicCourseToCourse(result);
+        setCourse(mapped);
+        setOpenModule(mapped.modules[0]?.id ?? null);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setCourse(null);
+        setLoadError(error instanceof Error ? error.message : 'Курс не найден');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  if (loading) {
+    return <div className="public-page"><PublicHeader /><main className="not-found-simple"><h1>Загружаем курс…</h1><p>Получаем опубликованную версию из backend.</p></main><PublicFooter /></div>;
+  }
 
   if (!course) {
     return (
       <div className="public-page">
         <PublicHeader />
-        <main className="not-found-simple"><h1>Курс не найден</h1><Link to="/catalog"><Button>Вернуться в каталог</Button></Link></main>
+        <main className="not-found-simple"><h1>Курс не найден</h1>{loadError ? <p>{loadError}</p> : null}<Link to="/catalog"><Button>Вернуться в каталог</Button></Link></main>
         <PublicFooter />
       </div>
     );
@@ -60,18 +89,42 @@ export function CoursePage() {
       navigate('/login', { state: { from: `/course/${course.slug}` } });
       return;
     }
+    if (user.role !== 'student') return;
+    if (course.accessMode === 'public-free') {
+      void (async () => {
+        setPaying(true);
+        setPaymentError(null);
+        try {
+          await api.learning.enrollFree(course.id);
+          const enrollments = await loadEnrollments();
+          const granted = enrollments.find((item) => item.courseId === course.id);
+          const first = granted?.lastLessonId || course.modules[0]?.lessons[0]?.id;
+          navigate(first ? `/app/course/${course.id}/lesson/${first}` : '/app/learning');
+        } catch (error) {
+          setPaymentError(error instanceof Error ? error.message : 'Не удалось записаться на курс');
+        } finally {
+          setPaying(false);
+        }
+      })();
+      return;
+    }
     setCheckoutOpen(true);
   };
 
-  const handlePurchase = () => {
+  const handlePurchase = async () => {
     setPaying(true);
-    window.setTimeout(() => {
-      purchase(course.id);
-      setPaying(false);
+    setPaymentError(null);
+    try {
+      const enrollment = await purchase(course);
       setCheckoutOpen(false);
-      const first = course.modules[0]?.lessons[0]?.id;
+      const first = enrollment.lastLessonId || course.modules[0]?.lessons[0]?.id;
       if (first) navigate(`/app/course/${course.id}/lesson/${first}`);
-    }, 900);
+      else navigate('/app/learning');
+    } catch (error) {
+      setPaymentError(error instanceof Error ? error.message : 'Не удалось завершить оплату');
+    } finally {
+      setPaying(false);
+    }
   };
 
   return (
@@ -97,15 +150,15 @@ export function CoursePage() {
             </div>
             <Card className="course-purchase-card">
               <div className="course-purchase-card__cover">
-                <img src={course.cover} alt="" />
+                <img src={coverUrl} alt="" />
                 {firstLesson ? <button onClick={() => user ? navigate(`/app/course/${course.id}/lesson/${firstLesson.id}`) : navigate('/login')}><Play size={23} fill="currentColor" /></button> : null}
               </div>
               <div className="course-purchase-card__body">
                 <div className="course-price-row">
-                  <strong>{formatMoney(course.price)}</strong>
-                  {course.oldPrice ? <s>{formatMoney(course.oldPrice)}</s> : null}
+                  <strong>{course.accessMode === 'public-free' ? 'Бесплатно' : formatMoney(course.price)}</strong>
+                  {course.accessMode !== 'public-free' && course.oldPrice ? <s>{formatMoney(course.oldPrice)}</s> : null}
                 </div>
-                <Button size="lg" onClick={handlePrimary}>{enrollment ? 'Продолжить обучение' : 'Купить курс'}</Button>
+                <Button size="lg" loading={paying && course.accessMode === 'public-free'} onClick={handlePrimary}>{enrollment ? 'Продолжить обучение' : course.accessMode === 'public-free' ? 'Записаться бесплатно' : 'Купить курс'}</Button>
                 {firstLesson?.isPreview ? <button className="preview-link" onClick={() => user ? navigate(`/app/course/${course.id}/lesson/${firstLesson.id}`) : navigate('/login')}><Play size={16} /> Открыть пробный урок</button> : null}
                 <div className="purchase-includes">
                   <strong>В курс входит</strong>
@@ -115,7 +168,7 @@ export function CoursePage() {
                   <span><Globe2 size={17} /> Доступ с любого устройства</span>
                   <span><Award size={17} /> Сертификат после завершения</span>
                 </div>
-                <small className="secure-note"><ShieldCheck size={15} /> Безопасная оплата · возврат по условиям оферты</small>
+                <small className="secure-note"><ShieldCheck size={15} /> {course.accessMode === 'public-free' ? 'Бесплатный доступ после записи' : 'Безопасная оплата · возврат по условиям оферты'}</small>
               </div>
             </Card>
           </div>
@@ -201,7 +254,7 @@ export function CoursePage() {
         actions={<><Button variant="ghost" onClick={() => setCheckoutOpen(false)}>Отмена</Button><Button loading={paying} onClick={handlePurchase}>Оплатить {formatMoney(course.price)}</Button></>}
       >
         <div className="checkout-summary">
-          <img src={course.cover} alt="" />
+          <img src={coverUrl} alt="" />
           <div><strong>{course.title}</strong><span>Доступ на 6 месяцев</span></div>
           <strong>{formatMoney(course.price)}</strong>
         </div>
@@ -211,7 +264,8 @@ export function CoursePage() {
           <span>МИР · VISA</span>
         </div>
         <label className="checkout-consent"><input type="checkbox" defaultChecked /> <span>Я принимаю условия оферты и согласен на обработку персональных данных.</span></label>
-        <p className="checkout-demo-note">В демонстрационной версии платёж подтверждается локально. В production эта операция выполняется через backend и webhook эквайринга.</p>
+        {paymentError ? <p className="checkout-error">{paymentError}</p> : null}
+        <p className="checkout-demo-note">В development создаётся настоящий Order/Payment в backend, затем mock-провайдер подтверждает оплату и сервер создаёт Enrollment. В production подтверждение придёт через webhook эквайринга.</p>
       </Modal>
     </div>
   );

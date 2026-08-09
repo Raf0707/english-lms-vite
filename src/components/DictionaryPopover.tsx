@@ -1,6 +1,7 @@
-import { BookPlus, GripHorizontal, Square, Volume2, X } from 'lucide-react';
+import { BookPlus, GripHorizontal, LoaderCircle, Square, Volume2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { api } from '../services/api';
 import { useAppStore } from '../store/useAppStore';
 import { Button } from './ui';
 
@@ -83,6 +84,9 @@ export function DictionaryPopover({ courseId, lessonId, containerRef }: { course
   const [translation, setTranslation] = useState('');
   const [dragging, setDragging] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [translationLoading, setTranslationLoading] = useState(false);
+  const [alternatives, setAlternatives] = useState<string[]>([]);
+  const [partsOfSpeech, setPartsOfSpeech] = useState<Array<{ partOfSpeech: string; translations: string[] }>>([]);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const add = useAppStore((state) => state.addDictionaryEntry);
@@ -117,6 +121,14 @@ export function DictionaryPopover({ courseId, lessonId, containerRef }: { course
 
     setSelection({ word: text, context, ...position });
     setTranslation(translations[normalized] ?? 'перевод можно уточнить');
+    setAlternatives([]);
+    setPartsOfSpeech([]);
+    setTranslationLoading(true);
+    void api.dictionary.translate(text, context).then((result) => {
+      setTranslation(result.translation);
+      setAlternatives((result.alternatives ?? []).filter((item) => item && item !== result.translation));
+      setPartsOfSpeech(result.partsOfSpeech ?? []);
+    }).catch(() => undefined).finally(() => setTranslationLoading(false));
 
     // A second pass uses the real rendered popup height, so it never jumps off-screen.
     window.requestAnimationFrame(() => {
@@ -226,7 +238,9 @@ export function DictionaryPopover({ courseId, lessonId, containerRef }: { course
       </div>
       <button className="dictionary-popover__close" onClick={() => { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); setSpeaking(false); setSelection(null); }} aria-label="Закрыть"><X size={15} /></button>
       <div className="dictionary-popover__word"><strong>{selection.word}</strong><button className={speaking ? 'is-speaking' : ''} onClick={toggleSpeech} title={speaking ? 'Остановить озвучивание' : 'Озвучить'}>{speaking ? <Square size={14} fill="currentColor" /> : <Volume2 size={18} />}</button></div>
-      <label>Перевод<input value={translation} onChange={(event) => setTranslation(event.target.value)} /></label>
+      <label>Перевод<div className="dictionary-auto-translation-input"><input value={translation} onChange={(event) => setTranslation(event.target.value)} />{translationLoading ? <LoaderCircle size={16} className="spin"/> : null}</div></label>
+      {alternatives.length ? <div className="dictionary-alternatives"><small>Другие варианты</small><div>{alternatives.map((item) => <button key={item} onClick={() => setTranslation(item)}>{item}</button>)}</div></div> : null}
+      {partsOfSpeech.length ? <div className="dictionary-senses">{partsOfSpeech.map((sense) => <div key={sense.partOfSpeech}><strong>{sense.partOfSpeech}</strong><span>{sense.translations.join(', ')}</span></div>)}</div> : null}
       <p>{selection.context}</p>
       <Button size="sm" icon={<BookPlus size={16} />} onClick={() => { add({ word: selection.word, translation, context: selection.context, courseId, lessonId }); setSelection(null); }}>Добавить в словарь</Button>
     </div>

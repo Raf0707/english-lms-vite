@@ -1,6 +1,7 @@
 import { ArrowRight, BookOpenCheck, CalendarClock, CheckCircle2, Clock3, Flame, Headphones, Play, Trophy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
+import { CourseCoverImage } from '../components/CourseCoverImage';
 import { ProgressRing } from '../components/ProgressRing';
 import { StatCard } from '../components/StatCard';
 import { Avatar, Badge, Button, Card } from '../components/ui';
@@ -34,7 +35,7 @@ export function DashboardPage() {
           <div className="section-title-row"><div><span className="eyebrow">Моё обучение</span><h2>Продолжить курс</h2></div><Link to="/app/learning" className="text-link">Все курсы <ArrowRight size={16} /></Link></div>
           {activeCourses.map(({ course, enrollment }) => course && (
             <Card className="continue-course" key={course.id}>
-              <img src={course.cover} alt="" />
+              <CourseCoverImage course={course} mode="private" alt="" />
               <div className="continue-course__content">
                 <div className="continue-course__top"><Badge tone="green">{course.level}</Badge><span>{course.category}</span></div>
                 <h3>{course.title}</h3>

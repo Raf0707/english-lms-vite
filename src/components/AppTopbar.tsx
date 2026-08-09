@@ -1,6 +1,6 @@
 import { Bell, BookOpen, CalendarDays, GraduationCap, Menu, Search, UserRoundSearch, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 import { formatDate } from '../utils/format';
 import { Avatar } from './ui';
@@ -11,14 +11,26 @@ export function AppTopbar({ title, subtitle }: { title?: string; subtitle?: stri
   const user = useAppStore((state) => state.user);
   const notifications = useAppStore((state) => state.notifications);
   const courses = useAppStore((state) => state.courses);
+  const managedCourses = useAppStore((state) => state.managedCourses);
   const sessions = useAppStore((state) => state.sessions);
   const markAllRead = useAppStore((state) => state.markAllNotificationsRead);
+  const loadNotifications = useAppStore((state) => state.loadNotifications);
+  const markRead = useAppStore((state) => state.markNotificationRead);
+  const navigate = useNavigate();
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const unread = notifications.filter((item) => !item.read).length;
+
+  useEffect(() => {
+    const refresh = () => void loadNotifications().catch(() => undefined);
+    const timer = window.setInterval(refresh, 60_000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
+  }, [loadNotifications]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -37,10 +49,10 @@ export function AppTopbar({ title, subtitle }: { title?: string; subtitle?: stri
     if (!user || query.trim().length < 1) return [];
     const q = query.trim().toLowerCase();
     const searchableCourses = user.role === 'teacher'
-      ? courses.filter((course) => course.ownerId === user.id || course.instructorId === user.id)
-      : user.role === 'student'
-        ? courses.filter((course) => course.status === 'published')
-        : courses;
+      ? managedCourses.filter((course) => course.ownerId === user.id || course.instructorId === user.id)
+      : user.role === 'admin'
+        ? managedCourses
+        : courses.filter((course) => course.status === 'published');
     const courseResults = searchableCourses
       .filter((course) => `${course.title} ${course.shortDescription} ${course.category} ${course.instructor}`.toLowerCase().includes(q))
       .slice(0, 5)
@@ -64,6 +76,7 @@ export function AppTopbar({ title, subtitle }: { title?: string; subtitle?: stri
     const sections: SearchResult[] = user.role === 'student'
       ? [
           { id: 's-learning', title: 'Моё обучение', subtitle: 'Курсы и прогресс', to: '/app/learning', kind: 'section' },
+          { id: 's-catalog', title: 'Каталог курсов', subtitle: 'Все опубликованные курсы', to: '/app/catalog', kind: 'section' },
           { id: 's-teachers', title: 'Преподаватели', subtitle: 'Индивидуальные и групповые занятия', to: '/app/teachers', kind: 'section' },
           { id: 's-dict', title: 'Мой словарь', subtitle: 'Слова и повторения', to: '/app/dictionary', kind: 'section' },
           { id: 's-schedule', title: 'Расписание', subtitle: 'Предстоящие занятия', to: '/app/schedule', kind: 'section' },
@@ -80,7 +93,7 @@ export function AppTopbar({ title, subtitle }: { title?: string; subtitle?: stri
           ];
     const sectionResults = sections.filter((item) => `${item.title} ${item.subtitle}`.toLowerCase().includes(q));
     return [...sectionResults, ...courseResults, ...sessionResults].slice(0, 9);
-  }, [courses, query, sessions, user]);
+  }, [courses, managedCourses, query, sessions, user]);
 
   if (!user) return null;
   const iconFor = (kind: SearchResult['kind']) => kind === 'course' ? <GraduationCap size={17} /> : kind === 'session' ? <CalendarDays size={17} /> : <BookOpen size={17} />;
@@ -138,12 +151,32 @@ export function AppTopbar({ title, subtitle }: { title?: string; subtitle?: stri
               </header>
               <div>
                 {notifications.slice(0, 5).map((item) => (
-                  <article key={item.id} className={!item.read ? 'unread' : ''}>
+                  <article
+                    key={item.id}
+                    className={`${!item.read ? 'unread' : ''}${item.actionPath ? ' actionable' : ''}`}
+                    onClick={() => {
+                      if (!item.read) void markRead(item.id);
+                      if (item.actionPath) {
+                        setNotificationsOpen(false);
+                        navigate(item.actionPath);
+                      }
+                    }}
+                    role={item.actionPath ? 'button' : undefined}
+                    tabIndex={item.actionPath ? 0 : undefined}
+                    onKeyDown={(event) => {
+                      if (item.actionPath && (event.key === 'Enter' || event.key === ' ')) {
+                        event.preventDefault();
+                        if (!item.read) void markRead(item.id);
+                        setNotificationsOpen(false);
+                        navigate(item.actionPath);
+                      }
+                    }}
+                  >
                     <span />
                     <div>
                       <strong>{item.title}</strong>
                       <p>{item.text}</p>
-                      <small>{formatDate(item.date, true)}</small>
+                      <small>{formatDate(item.date, true)}{item.actionPath ? ' · открыть' : ''}</small>
                     </div>
                   </article>
                 ))}

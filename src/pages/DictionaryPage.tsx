@@ -1,9 +1,10 @@
-import { BookOpenCheck, Download, Headphones, MoreHorizontal, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { BookOpenCheck, Download, Headphones, Languages, MoreHorizontal, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import { EmptyState } from '../components/EmptyState';
 import { Badge, Button, Card, Modal } from '../components/ui';
+import { api } from '../services/api';
 import { useAppStore } from '../store/useAppStore';
 import type { DictionaryEntry } from '../types';
 import { formatDate } from '../utils/format';
@@ -27,6 +28,9 @@ export function DictionaryPage() {
   const [word, setWord] = useState('');
   const [translation, setTranslation] = useState('');
   const [context, setContext] = useState('');
+  const [translationLoading, setTranslationLoading] = useState(false);
+  const [translationAlternatives, setTranslationAlternatives] = useState<string[]>([]);
+  const [translationSenses, setTranslationSenses] = useState<Array<{ partOfSpeech: string; translations: string[] }>>([]);
 
   const filtered = useMemo(() => dictionary.filter((entry) => {
     const searchMatch = `${entry.word} ${entry.translation} ${entry.context}`.toLowerCase().includes(search.toLowerCase());
@@ -41,12 +45,28 @@ export function DictionaryPage() {
     }
   };
 
+
+  const translateWord = async () => {
+    if (!word.trim() || translationLoading) return;
+    setTranslationLoading(true);
+    try {
+      const result = await api.dictionary.translate(word.trim(), context.trim() || undefined);
+      setTranslation(result.translation);
+      setTranslationAlternatives((result.alternatives ?? []).filter((item) => item && item !== result.translation));
+      setTranslationSenses(result.partsOfSpeech ?? []);
+    } catch (error) {
+      useAppStore.getState().addToast({ title: 'Автоперевод недоступен', text: error instanceof Error ? error.message : 'Провайдер перевода не настроен', tone: 'warning' });
+    } finally { setTranslationLoading(false); }
+  };
+
   const addManual = () => {
     if (!word.trim() || !translation.trim()) return;
     add({ word: word.trim(), translation: translation.trim(), context: context.trim() || word.trim() });
     setWord('');
     setTranslation('');
     setContext('');
+    setTranslationAlternatives([]);
+    setTranslationSenses([]);
     setModalOpen(false);
   };
 
@@ -100,7 +120,9 @@ export function DictionaryPage() {
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Добавить слово" actions={<><Button variant="ghost" onClick={() => setModalOpen(false)}>Отмена</Button><Button onClick={addManual}>Сохранить</Button></>}>
         <div className="manual-word-form">
           <label><span>Слово или выражение</span><input value={word} onChange={(event) => setWord(event.target.value)} placeholder="confidence" /></label>
-          <label><span>Перевод</span><input value={translation} onChange={(event) => setTranslation(event.target.value)} placeholder="уверенность" /></label>
+          <label><span>Перевод</span><div className="dictionary-manual-translate-row"><input value={translation} onChange={(event) => setTranslation(event.target.value)} placeholder="уверенность" /><Button type="button" size="sm" variant="secondary" icon={<Languages size={15}/>} loading={translationLoading} onClick={() => void translateWord()}>Автоперевод</Button></div></label>
+          {translationAlternatives.length ? <div className="dictionary-alternatives"><small>Другие варианты перевода</small><div>{translationAlternatives.map((item) => <button type="button" key={item} onClick={() => setTranslation(item)}>{item}</button>)}</div></div> : null}
+          {translationSenses.length ? <div className="dictionary-senses">{translationSenses.map((sense) => <div key={sense.partOfSpeech}><strong>{sense.partOfSpeech}</strong><span>{sense.translations.join(', ')}</span></div>)}</div> : null}
           <label><span>Контекст</span><textarea value={context} onChange={(event) => setContext(event.target.value)} placeholder="Confidence grows with practice." /></label>
         </div>
       </Modal>

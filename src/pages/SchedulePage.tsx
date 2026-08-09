@@ -158,7 +158,7 @@ export function SchedulePage() {
       <div className={view === 'calendar' ? 'schedule-layout schedule-layout--calendar-view' : 'schedule-layout'}>
         <section>
           {view === 'calendar' ? (
-            <Card className="full-calendar">
+            <div className="full-calendar-scroll"><Card className="full-calendar">
               <header><button onClick={() => setCalendarMonth(new Date(year, month - 1, 1))}><ChevronLeft size={18}/></button><div><strong>{monthName}</strong><small>{selectedDay ? `Выбран день: ${new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(new Date(`${selectedDay}T12:00:00`))}` : 'Выберите день, чтобы отфильтровать занятия'}</small></div><div><button className="calendar-today-button" onClick={() => { const now = new Date(); setCalendarMonth(now); setSelectedDay(todayKey); }}>Сегодня</button><button onClick={() => setCalendarMonth(new Date(year, month + 1, 1))}><ChevronRight size={18}/></button></div></header>
               <div className="full-calendar__week">{['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map((day) => <span key={day}>{day}</span>)}</div>
               <div className="full-calendar__grid">{calendarCells.map((cell, index) => {
@@ -166,7 +166,7 @@ export function SchedulePage() {
                 const daySessions = filtered.filter((session) => dateKeyInTimezone(session.startAt, user.timezone) === key && session.status !== 'cancelled');
                 return <button key={`${key}-${index}`} className={`${cell.muted ? 'muted ' : ''}${key === todayKey ? 'today ' : ''}${key === selectedDay ? 'selected ' : ''}${daySessions.length ? 'has-session' : ''}`} onClick={() => { setSelectedDay(key); if (cell.muted) setCalendarMonth(cell.date); }}><span>{cell.day}</span>{daySessions.slice(0,3).map((session) => <i key={session.id} title={session.title}><b>{new Intl.DateTimeFormat('ru-RU', { timeZone: user.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date(session.startAt))}</b><span>{session.title}</span></i>)}{daySessions.length > 3 ? <em>+{daySessions.length - 3}</em> : null}</button>;
               })}</div>
-            </Card>
+            </Card></div>
           ) : null}
 
           <div className="section-title-row"><div><span className="eyebrow">Предстоящие</span><h2>{selectedDay ? 'Занятия выбранного дня' : 'Ближайшие занятия'}</h2></div><Badge tone="green">{upcoming.length}</Badge></div>
@@ -194,7 +194,7 @@ export function SchedulePage() {
               <Card className="session-card" key={session.id}>
                 <div className="session-card__date"><CalendarDays size={25} /><small>{new Intl.DateTimeFormat('ru-RU', { timeZone: user.timezone, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(session.startAt))}</small></div>
                 <div className="session-card__content"><div><Badge>Завершено</Badge><span>{session.duration} мин</span></div><h3>{session.title}</h3><p>Посещение отмечено · материалы доступны в курсе</p></div>
-                <div className="session-card__actions"><Button variant="ghost">Материалы</Button></div>
+                <div className="session-card__actions"><Link to="/materials"><Button variant="ghost">Материалы</Button></Link></div>
               </Card>
             ))}
           </div>

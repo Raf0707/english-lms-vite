@@ -1,14 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import {
-  courses as seedCourses,
-  initialDictionary,
-  instructors,
-  notifications,
-  payments,
-  sessions as seedSessions,
-  tutoringSlots as seedTutoringSlots
-} from '../data/mock';
 import type {
   AssignmentSubmission,
   Course,
@@ -22,9 +13,9 @@ import type {
   TutoringSlot,
   User
 } from '../types';
-import { calculateSm2 } from '../utils/sm2';
-import { api, ApiError, type VerificationCodes } from '../services/api';
+import { api, ApiError, type BackendAssignmentSubmission, type BackendAvailability, type BackendCalendarEvent, type BackendDictionaryEntry, type BackendEnrollmentSummary, type BackendNotification, type BackendOrder, type VerificationCodes } from '../services/api';
 import { backendUserToAppUser, splitPersonName } from '../services/auth';
+import { courseBackend, learningCourseToCourse, managedSummaryToCourse, publicCourseToCourse } from '../services/courseBackend';
 
 interface Toast {
   id: string;
@@ -41,6 +32,9 @@ interface AppState {
   authError: string | null;
   pendingVerification: VerificationCodes | null;
   courses: Course[];
+  managedCourses: Course[];
+  managedCoursesStatus: 'idle' | 'loading' | 'ready' | 'error';
+  learningStatus: 'idle' | 'loading' | 'ready' | 'error';
   enrollments: Enrollment[];
   dictionary: DictionaryEntry[];
   sessions: Session[];
@@ -65,8 +59,19 @@ interface AppState {
   toggleSidebar: () => void;
   closeSidebar: () => void;
   toggleSidebarCollapsed: () => void;
-  purchaseCourse: (courseId: string) => void;
-  completeLesson: (courseId: string, lessonId: string) => void;
+  loadPublicCourses: () => Promise<Course[]>;
+  loadManagedCourses: () => Promise<Course[]>;
+  loadEnrollments: () => Promise<Enrollment[]>;
+  loadDictionary: () => Promise<DictionaryEntry[]>;
+  loadSchedule: () => Promise<Session[]>;
+  loadTutoringSlots: (teacherId?: string) => Promise<TutoringSlot[]>;
+  loadPayments: () => Promise<Payment[]>;
+  loadNotifications: () => Promise<Notification[]>;
+  loadAssignmentQueue: () => Promise<AssignmentSubmission[]>;
+  setManagedCourse: (course: Course) => void;
+  removeManagedCourse: (courseId: string) => void;
+  purchaseCourse: (course: Course) => Promise<Enrollment>;
+  completeLesson: (courseId: string, lessonId: string) => Promise<void>;
   upsertCourse: (course: Course) => Course;
   setCourseStatus: (courseId: string, status: CourseStatus, comment?: string) => void;
   submitCourseForModeration: (courseId: string) => void;
@@ -75,48 +80,30 @@ interface AppState {
   requestCourseDeletion: (courseId: string) => void;
   rejectCourseDeletion: (courseId: string) => void;
   deleteCourse: (courseId: string) => void;
-  addSession: (session: Omit<Session, 'id'>) => Session;
-  updateSession: (sessionId: string, data: Partial<Omit<Session, 'id'>>) => void;
-  removeSession: (sessionId: string) => void;
-  addTutoringSlot: (slot: Omit<TutoringSlot, 'id' | 'attendees' | 'booked'>) => TutoringSlot;
-  updateTutoringSlot: (slotId: string, data: Partial<Omit<TutoringSlot, 'id' | 'instructorId'>>) => void;
-  removeTutoringSlot: (slotId: string) => void;
-  bookTutoringSlot: (slotId: string) => void;
-  submitAssignment: (submission: Omit<AssignmentSubmission, 'id' | 'studentId' | 'studentName' | 'submittedAt'>) => AssignmentSubmission | null;
-  gradeAssignment: (submissionId: string, status: 'approved' | 'revision', score?: number, feedback?: string) => void;
-  addDictionaryEntry: (entry: Omit<DictionaryEntry, 'id' | 'createdAt' | 'repetitions' | 'interval' | 'easeFactor' | 'nextReviewAt' | 'status'>) => void;
-  removeDictionaryEntry: (id: string) => void;
-  rateReview: (id: string, quality: number) => void;
-  markNotificationRead: (id: string) => void;
-  markAllNotificationsRead: () => void;
+  addSession: (session: Omit<Session, 'id'>) => Promise<Session>;
+  updateSession: (sessionId: string, data: Partial<Omit<Session, 'id'>>) => Promise<void>;
+  removeSession: (sessionId: string) => Promise<void>;
+  addTutoringSlot: (slot: Omit<TutoringSlot, 'id' | 'attendees' | 'booked'>) => Promise<TutoringSlot>;
+  updateTutoringSlot: (slotId: string, data: Partial<Omit<TutoringSlot, 'id' | 'instructorId'>>) => Promise<void>;
+  removeTutoringSlot: (slotId: string) => Promise<void>;
+  bookTutoringSlot: (slotId: string) => Promise<void>;
+  submitAssignment: (submission: Omit<AssignmentSubmission, 'id' | 'studentId' | 'studentName' | 'submittedAt'>) => Promise<AssignmentSubmission | null>;
+  gradeAssignment: (submissionId: string, status: 'approved' | 'revision', score?: number, feedback?: string) => Promise<void>;
+  addDictionaryEntry: (entry: Omit<DictionaryEntry, 'id' | 'createdAt' | 'repetitions' | 'interval' | 'easeFactor' | 'nextReviewAt' | 'status'>) => Promise<void>;
+  removeDictionaryEntry: (id: string) => Promise<void>;
+  rateReview: (id: string, quality: number) => Promise<void>;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
   addToast: (toast: Omit<Toast, 'id'>) => void;
   dismissToast: (id: string) => void;
   resetDemo: () => void;
 }
 
-const baseEnrollments: Enrollment[] = [
-  {
-    courseId: 'everyday-a1',
-    progress: 28,
-    completedLessonIds: ['l1', 'l2'],
-    lastLessonId: 'l3',
-    startedAt: '2026-07-28T12:22:00.000Z',
-    expiresAt: '2027-01-28T12:22:00.000Z'
-  }
-];
+
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
-
-const seededCourses: Course[] = seedCourses.map((course, index) => ({
-  ...course,
-  status: course.status ?? (index === seedCourses.length - 1 ? 'moderation' : 'published'),
-  createdAt: course.createdAt ?? '2026-07-01T09:00:00.000Z',
-  updatedAt: course.updatedAt ?? '2026-08-01T09:00:00.000Z',
-  ownerId: course.ownerId ?? (course.instructor === 'Наталья Орлова' ? 'u-teacher' : course.instructorId),
-  schedule: course.schedule ?? []
-}));
 
 const devCredentials: Record<Exclude<Role, 'guest'>, { login: string; password: string }> = {
   student: {
@@ -134,7 +121,75 @@ const devCredentials: Record<Exclude<Role, 'guest'>, { login: string; password: 
 };
 
 function apiMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : 'Не удалось выполнить запрос к серверу';
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return 'Не удалось выполнить запрос к серверу';
+}
+
+function enrollmentFromBackend(item: BackendEnrollmentSummary, fallbackLastLessonId = ''): Enrollment {
+  return {
+    courseId: item.courseId,
+    progress: item.progress,
+    completedLessonIds: item.completedLessonIds ?? [],
+    lastLessonId: item.lastLessonId || fallbackLastLessonId,
+    startedAt: item.startedAt,
+    expiresAt: item.expiresAt ?? undefined
+  };
+}
+
+function dictionaryFromBackend(item: BackendDictionaryEntry): DictionaryEntry {
+  const state = item.reviewState;
+  const statusMap: Record<string, DictionaryEntry['status']> = { NEW: 'new', LEARNING: 'learning', REVIEW: 'review', MASTERED: 'mastered', PAUSED: 'paused' };
+  return {
+    id: item.id, word: item.sourceText, translation: item.translation, context: item.contextSentence ?? '',
+    courseId: item.courseId ?? undefined, lessonId: item.lessonKeyId ?? undefined, status: statusMap[item.status] ?? 'new',
+    repetitions: state?.repetitions ?? 0, interval: state?.intervalDays ?? 0, easeFactor: Number(state?.easeFactor ?? 2.5),
+    nextReviewAt: state?.nextReviewAt ?? item.createdAt, createdAt: item.createdAt
+  };
+}
+
+function sessionFromBackend(item: BackendCalendarEvent): Session {
+  const profile = item.instructor?.profile;
+  const instructor = profile?.displayName || [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || 'Преподаватель';
+  const type: Session['type'] = item.type === 'PRIVATE_LESSON' ? 'individual' : item.type === 'GROUP_LESSON' ? 'group' : 'webinar';
+  const statusMap: Record<string, Session['status']> = { SCHEDULED: 'scheduled', LIVE: 'live', COMPLETED: 'completed', CANCELLED: 'cancelled' };
+  return {
+    id: item.id, title: item.title, type, courseId: item.courseId ?? undefined, instructor, instructorId: item.instructorId, startAt: item.startAt,
+    duration: Math.max(1, Math.round((+new Date(item.endAt) - +new Date(item.startAt)) / 60000)), attendees: item.attendees ?? item.bookings?.length ?? 0,
+    maxAttendees: item.maxParticipants, price: Math.round(item.priceMinor / 100), status: statusMap[item.status] ?? 'scheduled', source: item.courseId ? 'course' : 'tutoring'
+  };
+}
+
+function slotFromBackend(item: BackendAvailability): TutoringSlot {
+  return {
+    id: item.id, instructorId: item.teacherId, type: item.type === 'GROUP' ? 'group' : 'individual', startAt: item.startAt,
+    duration: Math.max(1, Math.round((+new Date(item.endAt) - +new Date(item.startAt)) / 60000)), price: Math.round(item.priceMinor / 100),
+    maxAttendees: item.maxParticipants, attendees: item.attendees ?? 0, booked: Boolean(item.booked)
+  };
+}
+
+function paymentFromBackend(order: BackendOrder): Payment {
+  const payment = order.payments?.[0];
+  const receipt = order.receipts?.find((item) => item.url);
+  const refunded = order.status === 'REFUNDED' || order.status === 'PARTIALLY_REFUNDED' || payment?.status === 'REFUNDED';
+  const status: Payment['status'] = refunded ? 'refunded' : payment?.status === 'SUCCEEDED' || order.status === 'PAID' ? 'paid' : payment?.status === 'FAILED' ? 'failed' : 'pending';
+  return { id: order.id, number: order.number, title: order.items?.map((item) => item.title).join(', ') || 'Заказ', amount: order.totalMinor / 100, date: payment?.paidAt ?? order.createdAt, status, receiptUrl: receipt?.url ?? undefined };
+}
+
+function notificationFromBackend(item: BackendNotification): Notification {
+  const type: Notification['type'] = item.type.includes('PAYMENT') ? 'payment' : item.type.includes('SESSION') || item.type.includes('BOOKING') ? 'session' : item.type.includes('LESSON') ? 'lesson' : 'system';
+  return { id: item.id, title: item.title, text: item.body, date: item.createdAt, read: Boolean(item.readAt), type, actionPath: typeof item.payload?.path === 'string' ? item.payload.path : undefined };
+}
+
+function submissionFromBackend(item: BackendAssignmentSubmission): AssignmentSubmission {
+  const profile = item.student?.profile;
+  const studentName = profile?.displayName || [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || 'Ученик';
+  const status: AssignmentSubmission['status'] = item.status === 'ACCEPTED' ? 'approved' : item.status === 'REVISION_REQUIRED' ? 'revision' : 'pending';
+  return {
+    id: item.id, assignmentId: item.assignmentVersion?.id ?? item.assignmentVersionId, courseId: item.assignmentVersion?.courseVersion?.courseId ?? '',
+    lessonId: item.assignmentVersion?.lessonKeyId ?? '', studentId: item.studentId, studentName, answer: item.answerText ?? undefined,
+    fileName: item.fileAssetId ?? undefined, fileAssetId: item.fileAssetId ?? undefined, status, score: item.score ?? undefined, feedback: item.feedback ?? undefined, submittedAt: item.submittedAt, reviewedAt: item.reviewedAt ?? undefined
+  };
 }
 
 export const useAppStore = create<AppState>()(
@@ -144,14 +199,17 @@ export const useAppStore = create<AppState>()(
       authStatus: 'idle',
       authError: null,
       pendingVerification: null,
-      courses: seededCourses,
-      enrollments: baseEnrollments,
-      dictionary: initialDictionary,
-      sessions: seedSessions,
-      tutoringSlots: seedTutoringSlots,
+      courses: [],
+      managedCourses: [],
+      managedCoursesStatus: 'idle',
+      learningStatus: 'idle',
+      enrollments: [],
+      dictionary: [],
+      sessions: [],
+      tutoringSlots: [],
       assignmentSubmissions: [],
-      payments,
-      notifications,
+      payments: [],
+      notifications: [],
       toasts: [],
       sidebarOpen: false,
       sidebarCollapsed: false,
@@ -160,7 +218,14 @@ export const useAppStore = create<AppState>()(
         set({ authStatus: 'loading', authError: null });
         try {
           const backendUser = await api.profile.me();
-          set({ user: backendUserToAppUser(backendUser), authStatus: 'authenticated', authError: null });
+          const user = backendUserToAppUser(backendUser);
+          set({ user, authStatus: 'authenticated', authError: null, managedCourses: [], managedCoursesStatus: 'idle', enrollments: [], learningStatus: user.role === 'student' ? 'loading' : 'idle' });
+          const connected: Promise<unknown>[] = [get().loadNotifications()];
+          if (user.role === 'student') connected.push(get().loadPublicCourses(), get().loadEnrollments(), get().loadDictionary(), get().loadSchedule(), get().loadPayments());
+          if (user.role === 'teacher') connected.push(get().loadManagedCourses(), get().loadSchedule(), get().loadTutoringSlots(user.id), get().loadAssignmentQueue());
+          if (user.role === 'admin') connected.push(get().loadManagedCourses());
+          const settled = await Promise.allSettled(connected);
+          if (user.role === 'student' && settled.some((item) => item.status === 'rejected')) set({ learningStatus: get().enrollments.length ? 'ready' : 'error' });
         } catch (error) {
           if (error instanceof ApiError && error.status === 401) {
             set({ user: null, authStatus: 'guest', authError: null });
@@ -179,7 +244,13 @@ export const useAppStore = create<AppState>()(
           await api.auth.login(identifier.trim(), password);
           const fullUser = await api.profile.me();
           const user = backendUserToAppUser(fullUser);
-          set({ user, authStatus: 'authenticated', authError: null, sidebarOpen: false });
+          set({ user, authStatus: 'authenticated', authError: null, sidebarOpen: false, managedCourses: [], managedCoursesStatus: 'idle', enrollments: [], learningStatus: user.role === 'student' ? 'loading' : 'idle' });
+          const connected: Promise<unknown>[] = [get().loadNotifications()];
+          if (user.role === 'student') connected.push(get().loadPublicCourses(), get().loadEnrollments(), get().loadDictionary(), get().loadSchedule(), get().loadPayments());
+          if (user.role === 'teacher') connected.push(get().loadManagedCourses(), get().loadSchedule(), get().loadTutoringSlots(user.id), get().loadAssignmentQueue());
+          if (user.role === 'admin') connected.push(get().loadManagedCourses());
+          const settled = await Promise.allSettled(connected);
+          if (settled.some((item) => item.status === 'rejected')) get().addToast({ title: 'Вход выполнен', text: 'Часть данных не удалось загрузить сразу. Разделы можно обновить повторно.', tone: 'warning' });
           get().addToast({ title: 'Добро пожаловать!', text: 'Вход выполнен через backend.', tone: 'success' });
           return user;
         } catch (error) {
@@ -207,8 +278,15 @@ export const useAppStore = create<AppState>()(
             authStatus: 'authenticated',
             authError: null,
             pendingVerification: result.verification ?? null,
-            sidebarOpen: false
+            sidebarOpen: false,
+            managedCourses: [],
+            managedCoursesStatus: 'idle',
+            enrollments: [],
+            learningStatus: user.role === 'student' ? 'loading' : 'idle'
           });
+          const connected: Promise<unknown>[] = [get().loadNotifications()];
+          if (user.role === 'student') connected.push(get().loadPublicCourses(), get().loadEnrollments(), get().loadDictionary(), get().loadSchedule(), get().loadPayments());
+          await Promise.allSettled(connected);
           get().addToast({ title: 'Аккаунт создан', text: 'Данные сохранены в PostgreSQL, сессия создана в Redis.', tone: 'success' });
           return { user, verification: result.verification };
         } catch (error) {
@@ -262,7 +340,7 @@ export const useAppStore = create<AppState>()(
       },
       resetPassword: async (token, newPassword) => {
         await api.auth.resetPassword(token, newPassword);
-        set({ user: null, authStatus: 'guest', pendingVerification: null });
+        set({ user: null, authStatus: 'guest', pendingVerification: null, enrollments: [], learningStatus: 'idle', courses: [] });
       },
       logout: async () => {
         try {
@@ -270,44 +348,161 @@ export const useAppStore = create<AppState>()(
         } catch (error) {
           if (!(error instanceof ApiError && error.status === 401)) throw error;
         } finally {
-          set({ user: null, authStatus: 'guest', authError: null, pendingVerification: null, sidebarOpen: false });
+          set({ user: null, authStatus: 'guest', authError: null, pendingVerification: null, sidebarOpen: false, managedCourses: [], managedCoursesStatus: 'idle', enrollments: [], learningStatus: 'idle', courses: [], dictionary: [], sessions: [], tutoringSlots: [], assignmentSubmissions: [], payments: [], notifications: [] });
         }
       },
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       closeSidebar: () => set({ sidebarOpen: false }),
       toggleSidebarCollapsed: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-      purchaseCourse: (courseId) => {
-        if (get().enrollments.some((item) => item.courseId === courseId)) {
-          get().addToast({ title: 'Курс уже доступен', tone: 'info' });
-          return;
-        }
-        const course = get().courses.find((item) => item.id === courseId);
-        if (!course) return;
-        const firstLesson = course.modules[0]?.lessons[0]?.id ?? '';
-        const enrollment: Enrollment = {
-          courseId,
-          progress: 0,
-          completedLessonIds: [],
-          lastLessonId: firstLesson,
-          startedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 180).toISOString()
-        };
-        const payment: Payment = {
-          id: newId('payment'),
-          number: `LNG-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 89999)}`,
-          title: course.title,
-          amount: course.price,
-          date: new Date().toISOString(),
-          status: 'paid',
-          receiptUrl: '#'
-        };
-        set((state) => ({
-          enrollments: [enrollment, ...state.enrollments],
-          payments: [payment, ...state.payments]
-        }));
-        get().addToast({ title: 'Оплата прошла успешно', text: 'Доступ к курсу открыт.', tone: 'success' });
+      loadPublicCourses: async () => {
+        const result = await courseBackend.listPublic();
+        const publicCourses = result.items.map(publicCourseToCourse);
+        set((state) => {
+          const existingById = new Map(state.courses.map((course) => [course.id, course]));
+          // Keep the richer enrollment-bound course object when it is already
+          // loaded; add public catalogue courses that are not present yet.
+          for (const course of publicCourses) {
+            if (!existingById.has(course.id)) existingById.set(course.id, course);
+          }
+          return { courses: [...existingById.values()] };
+        });
+        return publicCourses;
       },
-      completeLesson: (courseId, lessonId) => {
+      loadManagedCourses: async () => {
+        set({ managedCoursesStatus: 'loading' });
+        try {
+          const items = await courseBackend.listManaged();
+          const courses = items.map(managedSummaryToCourse);
+          set({ managedCourses: courses, managedCoursesStatus: 'ready' });
+          return courses;
+        } catch (error) {
+          set({ managedCoursesStatus: 'error' });
+          throw error;
+        }
+      },
+      loadEnrollments: async () => {
+        set({ learningStatus: 'loading' });
+        try {
+          const summaries = await api.learning.enrollments();
+          const loadedCourses = await Promise.all(summaries.map(async (summary) => {
+            try {
+              const learningCourse = await api.learning.course(summary.courseId);
+              return learningCourseToCourse(learningCourse);
+            } catch {
+              try {
+                const publicCourse = await courseBackend.publicBySlug(summary.slug);
+                return publicCourseToCourse(publicCourse);
+              } catch {
+                return null;
+              }
+            }
+          }));
+          const courseById = new Map(loadedCourses.filter((course): course is Course => Boolean(course)).map((course) => [course.id, course]));
+          const enrollments = summaries.map((summary) => {
+            const course = courseById.get(summary.courseId);
+            const firstLesson = course?.modules[0]?.lessons[0]?.id ?? '';
+            return enrollmentFromBackend(summary, firstLesson);
+          });
+          set((state) => ({
+            learningStatus: 'ready',
+            enrollments,
+            courses: [
+              ...courseById.values(),
+              ...state.courses.filter((course) => !courseById.has(course.id))
+            ]
+          }));
+          return enrollments;
+        } catch (error) {
+          set({ learningStatus: 'error' });
+          throw error;
+        }
+      },
+      loadDictionary: async () => {
+        const items = await api.dictionary.list();
+        const dictionary = items.map(dictionaryFromBackend);
+        set({ dictionary });
+        return dictionary;
+      },
+      loadSchedule: async () => {
+        const items = await api.schedule.mine();
+        const sessions = items.map(sessionFromBackend);
+        set({ sessions });
+        return sessions;
+      },
+      loadTutoringSlots: async (teacherId) => {
+        const id = teacherId ?? get().user?.id;
+        if (!id) { set({ tutoringSlots: [] }); return []; }
+        const from = new Date(Date.now() - 86400000).toISOString();
+        const to = new Date(Date.now() + 400 * 86400000).toISOString();
+        const items = await api.schedule.availability(id, from, to);
+        const slots = items.map(slotFromBackend);
+        set((state) => ({ tutoringSlots: [...slots, ...state.tutoringSlots.filter((slot) => slot.instructorId !== id)] }));
+        return slots;
+      },
+      loadPayments: async () => {
+        const orders = await api.payments.myOrders();
+        const rows = orders.map(paymentFromBackend);
+        set({ payments: rows });
+        return rows;
+      },
+      loadNotifications: async () => {
+        const items = await api.notifications.list();
+        const rows = items.map(notificationFromBackend);
+        set({ notifications: rows });
+        return rows;
+      },
+      loadAssignmentQueue: async () => {
+        const items = await api.assignments.queue();
+        const rows = items.map(submissionFromBackend);
+        set({ assignmentSubmissions: rows });
+        return rows;
+      },
+      setManagedCourse: (course) => set((state) => ({
+        managedCourses: [course, ...state.managedCourses.filter((item) => item.id !== course.id)]
+      })),
+      removeManagedCourse: (courseId) => set((state) => ({
+        managedCourses: state.managedCourses.filter((item) => item.id !== courseId)
+      })),
+      purchaseCourse: async (course) => {
+        const existing = get().enrollments.find((item) => item.courseId === course.id);
+        if (existing) {
+          get().addToast({ title: 'Курс уже доступен', text: 'Он находится в разделе «Моё обучение».', tone: 'info' });
+          return existing;
+        }
+        try {
+          const order = await api.payments.createOrder({ productId: course.id });
+          if (order.provider === 'mock') {
+            await api.payments.mockSucceed(order.paymentId);
+          } else if (order.confirmationUrl) {
+            window.location.assign(order.confirmationUrl);
+            throw new Error('Открыта страница оплаты. После подтверждения вернитесь в «Моё обучение».');
+          }
+
+          set((state) => ({
+            courses: [course, ...state.courses.filter((item) => item.id !== course.id)]
+          }));
+          const enrollments = await get().loadEnrollments();
+          const enrollment = enrollments.find((item) => item.courseId === course.id);
+          if (!enrollment) throw new Error('Оплата подтверждена, но зачисление ещё не появилось. Обновите «Моё обучение».');
+          get().addToast({ title: 'Оплата прошла успешно', text: 'Доступ к курсу открыт и сохранён на backend.', tone: 'success' });
+          return enrollment;
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) {
+            try {
+              const enrollments = await get().loadEnrollments();
+              const enrollment = enrollments.find((item) => item.courseId === course.id);
+              if (enrollment) {
+                get().addToast({ title: 'Курс уже доступен', text: 'Доступ восстановлен из backend.', tone: 'info' });
+                return enrollment;
+              }
+            } catch { /* keep original payment error */ }
+          }
+          const message = apiMessage(error);
+          get().addToast({ title: 'Не удалось открыть доступ к курсу', text: message, tone: 'warning' });
+          throw error;
+        }
+      },
+      completeLesson: async (courseId, lessonId) => {
         const course = get().courses.find((item) => item.id === courseId);
         if (!course) return;
         const allLessonIds = course.modules.flatMap((module) => module.lessons.map((lesson) => lesson.id));
@@ -317,24 +512,16 @@ export const useAppStore = create<AppState>()(
           get().addToast({ title: 'Не удалось обновить прогресс', text: 'Зачисление на курс не найдено.', tone: 'warning' });
           return;
         }
-        if ((targetEnrollment.completedLessonIds ?? []).includes(lessonId)) return;
-        set((state) => ({
-          enrollments: state.enrollments.map((enrollment) => {
-            if (enrollment.courseId !== courseId) return enrollment;
-            const completed = Array.from(new Set([...(enrollment.completedLessonIds ?? []), lessonId]))
-              .filter((id) => allLessonIds.includes(id));
-            const currentIndex = allLessonIds.indexOf(lessonId);
-            const nextLesson = allLessonIds[currentIndex + 1] ?? lessonId;
-            return {
-              ...enrollment,
-              completedLessonIds: completed,
-              progress: allLessonIds.length ? Math.min(100, Math.round((completed.length / allLessonIds.length) * 100)) : 0,
-              lastLessonId: nextLesson
-            };
-          })
-        }));
-        get().addToast({ title: 'Урок завершён', text: 'Прогресс курса обновлён. Можно перейти к следующему уроку.', tone: 'success' });
+        try {
+          await api.learning.completeLesson(lessonId);
+          await get().loadEnrollments();
+          get().addToast({ title: 'Урок завершён', text: 'Прогресс курса сохранён на backend.', tone: 'success' });
+        } catch (error) {
+          get().addToast({ title: 'Не удалось сохранить прогресс', text: apiMessage(error), tone: 'warning' });
+          throw error;
+        }
       },
+
       upsertCourse: (course) => {
         const now = new Date().toISOString();
         const recordId = course.id || newId('course');
@@ -438,119 +625,124 @@ export const useAppStore = create<AppState>()(
         }));
         get().addToast({ title: 'Курс удалён', text: course.title, tone: 'info' });
       },
-      addSession: (session) => {
-        const record: Session = { ...session, id: newId('session') };
-        set((state) => ({ sessions: [record, ...state.sessions] }));
+      addSession: async (session) => {
+        const endAt = new Date(+new Date(session.startAt) + session.duration * 60000).toISOString();
+        const created = await api.schedule.createEvent({
+          title: session.title,
+          type: session.type === 'individual' ? 'PRIVATE_LESSON' : session.type === 'group' ? 'GROUP_LESSON' : 'WEBINAR',
+          courseId: session.courseId,
+          startAt: session.startAt, endAt, maxParticipants: session.maxAttendees, priceMinor: Math.round((session.price ?? 0) * 100), currency: 'RUB'
+        });
+        const record = sessionFromBackend(created);
+        set((state) => ({ sessions: [record, ...state.sessions.filter((item) => item.id !== record.id)] }));
         get().addToast({ title: 'Занятие добавлено', text: `${record.title} — ${new Date(record.startAt).toLocaleString('ru-RU')}`, tone: 'success' });
         return record;
       },
-      updateSession: (sessionId, data) => {
-        set((state) => ({ sessions: state.sessions.map((session) => session.id === sessionId ? { ...session, ...data } : session) }));
-        get().addToast({ title: 'Занятие обновлено', text: 'Изменения в расписании сохранены.', tone: 'success' });
+      updateSession: async (sessionId, data) => {
+        const current = get().sessions.find((item) => item.id === sessionId);
+        if (!current) return;
+        const next = { ...current, ...data };
+        const endAt = new Date(+new Date(next.startAt) + next.duration * 60000).toISOString();
+        const updated = await api.schedule.updateEvent(sessionId, {
+          title: next.title, type: next.type === 'individual' ? 'PRIVATE_LESSON' : next.type === 'group' ? 'GROUP_LESSON' : 'WEBINAR',
+          courseId: next.courseId, startAt: next.startAt, endAt, maxParticipants: next.maxAttendees, priceMinor: Math.round((next.price ?? 0) * 100), currency: 'RUB'
+        });
+        const record = sessionFromBackend(updated);
+        set((state) => ({ sessions: state.sessions.map((item) => item.id === sessionId ? record : item) }));
+        get().addToast({ title: 'Занятие обновлено', text: 'Изменения сохранены на backend.', tone: 'success' });
       },
-      removeSession: (sessionId) => {
+      removeSession: async (sessionId) => {
+        await api.schedule.deleteEvent(sessionId);
         set((state) => ({ sessions: state.sessions.filter((session) => session.id !== sessionId) }));
         get().addToast({ title: 'Занятие удалено', tone: 'info' });
       },
-      addTutoringSlot: (slot) => {
-        const record: TutoringSlot = { ...slot, id: newId('slot'), attendees: 0, booked: false };
-        set((state) => ({ tutoringSlots: [record, ...state.tutoringSlots] }));
+      addTutoringSlot: async (slot) => {
+        const endAt = new Date(+new Date(slot.startAt) + slot.duration * 60000).toISOString();
+        const created = await api.schedule.createAvailability({
+          type: slot.type === 'group' ? 'GROUP' : 'INDIVIDUAL', startAt: slot.startAt, endAt,
+          priceMinor: Math.round(slot.price * 100), currency: 'RUB', maxParticipants: slot.maxAttendees
+        });
+        const record = slotFromBackend(created);
+        set((state) => ({ tutoringSlots: [record, ...state.tutoringSlots.filter((item) => item.id !== record.id)] }));
         get().addToast({ title: 'Окно для записи опубликовано', text: `${new Date(record.startAt).toLocaleString('ru-RU')} · ${record.type === 'individual' ? 'индивидуально' : 'группа'}`, tone: 'success' });
         return record;
       },
-      updateTutoringSlot: (slotId, data) => {
-        set((state) => ({ tutoringSlots: state.tutoringSlots.map((slot) => slot.id === slotId ? { ...slot, ...data } : slot) }));
+      updateTutoringSlot: async (slotId, data) => {
+        const current = get().tutoringSlots.find((item) => item.id === slotId);
+        if (!current) return;
+        const next = { ...current, ...data };
+        const endAt = new Date(+new Date(next.startAt) + next.duration * 60000).toISOString();
+        await api.schedule.updateAvailability(slotId, {
+          type: next.type === 'group' ? 'GROUP' : 'INDIVIDUAL', startAt: next.startAt, endAt,
+          priceMinor: Math.round(next.price * 100), currency: 'RUB', maxParticipants: next.maxAttendees
+        });
+        await get().loadTutoringSlots(next.instructorId);
         get().addToast({ title: 'Окно для записи обновлено', tone: 'success' });
       },
-      removeTutoringSlot: (slotId) => {
+      removeTutoringSlot: async (slotId) => {
+        await api.schedule.deleteAvailability(slotId);
         set((state) => ({ tutoringSlots: state.tutoringSlots.filter((slot) => slot.id !== slotId) }));
         get().addToast({ title: 'Окно для записи удалено', tone: 'info' });
       },
-      bookTutoringSlot: (slotId) => {
+      bookTutoringSlot: async (slotId) => {
         const slot = get().tutoringSlots.find((item) => item.id === slotId);
-        if (!slot || slot.booked || slot.attendees >= slot.maxAttendees) return;
-        const instructor = instructors.find((item) => item.id === slot.instructorId);
-        if (!instructor) return;
-        const session: Session = {
-          id: newId('session'),
-          title: slot.type === 'individual' ? `Индивидуальное занятие с ${instructor.name}` : `Групповое занятие с ${instructor.name}`,
-          type: slot.type,
-          instructor: instructor.name,
-          instructorId: instructor.id,
-          startAt: slot.startAt,
-          duration: slot.duration,
-          attendees: slot.attendees + 1,
-          maxAttendees: slot.maxAttendees,
-          price: slot.price,
-          status: 'scheduled',
-          source: 'tutoring'
-        };
-        const payment: Payment = {
-          id: newId('payment'),
-          number: `LESSON-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 89999)}`,
-          title: session.title,
-          amount: slot.price,
-          date: new Date().toISOString(),
-          status: 'paid',
-          receiptUrl: '#'
-        };
-        set((state) => ({
-          tutoringSlots: state.tutoringSlots.map((item) => item.id === slotId ? {
-            ...item,
-            attendees: item.attendees + 1,
-            booked: true
-          } : item),
-          sessions: [session, ...state.sessions],
-          payments: [payment, ...state.payments]
-        }));
-        get().addToast({ title: 'Занятие забронировано', text: 'Оно появилось в расписании. Оплата сохранена в истории.', tone: 'success' });
+        if (!slot) throw new Error('Окно записи не найдено');
+        const booking = await api.schedule.bookAvailability(slotId);
+        if (booking.needsPayment) {
+          const order = await api.payments.createBookingOrder(booking.bookingId);
+          if (order.provider === 'mock') await api.payments.mockSucceed(order.paymentId);
+          else if (order.confirmationUrl) window.location.assign(order.confirmationUrl);
+        }
+        await Promise.allSettled([get().loadSchedule(), get().loadPayments(), get().loadTutoringSlots(slot.instructorId)]);
+        get().addToast({ title: 'Занятие забронировано', text: booking.needsPayment ? 'Оплата подтверждена, занятие добавлено в расписание.' : 'Занятие добавлено в расписание.', tone: 'success' });
       },
-      submitAssignment: (submission) => {
+      submitAssignment: async (submission) => {
         const currentUser = get().user;
         if (!currentUser || currentUser.role !== 'student') return null;
+        const result = await api.assignments.submit(submission.assignmentId, { answerText: submission.answer, fileAssetId: submission.fileAssetId });
         const record: AssignmentSubmission = {
-          ...submission,
-          id: newId('submission'),
-          studentId: currentUser.id,
-          studentName: currentUser.name,
-          submittedAt: new Date().toISOString()
+          id: result.id, assignmentId: submission.assignmentId, courseId: submission.courseId, lessonId: submission.lessonId,
+          studentId: currentUser.id, studentName: currentUser.name, answer: result.answerText ?? submission.answer, fileName: submission.fileName, fileAssetId: result.fileAssetId ?? submission.fileAssetId,
+          status: result.status === 'ACCEPTED' ? 'approved' : result.status === 'REVISION_REQUIRED' ? 'revision' : 'pending',
+          score: result.score ?? undefined, feedback: result.feedback ?? undefined, submittedAt: result.submittedAt, reviewedAt: result.reviewedAt ?? undefined
         };
-        set((state) => ({
-          assignmentSubmissions: [record, ...state.assignmentSubmissions.filter((item) => !(item.assignmentId === record.assignmentId && item.studentId === currentUser.id && item.status === 'pending'))]
-        }));
+        set((state) => ({ assignmentSubmissions: [record, ...state.assignmentSubmissions.filter((item) => item.id !== record.id)] }));
         return record;
       },
-      gradeAssignment: (submissionId, status, score, feedback) => {
-        set((state) => ({ assignmentSubmissions: state.assignmentSubmissions.map((item) => item.id === submissionId ? { ...item, status, score, feedback, reviewedAt: new Date().toISOString() } : item) }));
+      gradeAssignment: async (submissionId, status, score, feedback) => {
+        const existing = get().assignmentSubmissions.find((item) => item.id === submissionId);
+        const result = await api.assignments.review(submissionId, {
+          status: status === 'approved' ? 'ACCEPTED' : 'REVISION_REQUIRED',
+          score: status === 'approved' ? Math.max(0, Number(score ?? existing?.score ?? 0)) : 0,
+          feedback: feedback ?? ''
+        });
+        set((state) => ({ assignmentSubmissions: state.assignmentSubmissions.map((item) => item.id === submissionId ? { ...item, status: result.status === 'ACCEPTED' ? 'approved' : 'revision', score: result.score ?? undefined, feedback: result.feedback ?? undefined, reviewedAt: result.reviewedAt ?? new Date().toISOString() } : item) }));
         get().addToast({ title: status === 'approved' ? 'Задание принято' : 'Задание возвращено на доработку', text: feedback, tone: status === 'approved' ? 'success' : 'warning' });
       },
-      addDictionaryEntry: (entry) => {
+      addDictionaryEntry: async (entry) => {
         const existing = get().dictionary.find((item) => item.word.toLowerCase() === entry.word.toLowerCase());
-        if (existing) {
-          get().addToast({ title: 'Слово уже в словаре', text: existing.word, tone: 'info' });
-          return;
-        }
-        const record: DictionaryEntry = {
-          ...entry,
-          id: newId('word'),
-          createdAt: new Date().toISOString(),
-          repetitions: 0,
-          interval: 0,
-          easeFactor: 2.5,
-          nextReviewAt: new Date().toISOString(),
-          status: 'new'
-        };
-        set((state) => ({ dictionary: [record, ...state.dictionary] }));
+        if (existing) { get().addToast({ title: 'Слово уже в словаре', text: existing.word, tone: 'info' }); return; }
+        const created = await api.dictionary.add({ sourceText: entry.word, translation: entry.translation, contextSentence: entry.context || undefined, courseId: entry.courseId, lessonKeyId: entry.lessonId });
+        const record = dictionaryFromBackend(created);
+        set((state) => ({ dictionary: [record, ...state.dictionary.filter((item) => item.id !== record.id)] }));
         get().addToast({ title: 'Добавлено в словарь', text: `${entry.word} — ${entry.translation}`, tone: 'success' });
       },
-      removeDictionaryEntry: (id) => set((state) => ({ dictionary: state.dictionary.filter((item) => item.id !== id) })),
-      rateReview: (id, quality) => {
-        set((state) => ({
-          dictionary: state.dictionary.map((entry) => entry.id === id ? { ...entry, ...calculateSm2(entry, quality) } : entry)
-        }));
+      removeDictionaryEntry: async (id) => {
+        await api.dictionary.remove(id);
+        set((state) => ({ dictionary: state.dictionary.filter((item) => item.id !== id) }));
       },
-      markNotificationRead: (id) => set((state) => ({ notifications: state.notifications.map((item) => item.id === id ? { ...item, read: true } : item) })),
-      markAllNotificationsRead: () => set((state) => ({ notifications: state.notifications.map((item) => ({ ...item, read: true })) })),
+      rateReview: async (id, quality) => {
+        const next = await api.dictionary.review(id, quality);
+        set((state) => ({ dictionary: state.dictionary.map((entry) => entry.id === id ? { ...entry, repetitions: next.repetitions, interval: next.intervalDays, easeFactor: next.easeFactor, nextReviewAt: next.nextReviewAt, status: next.repetitions >= 5 ? 'review' : 'learning' } : entry) }));
+      },
+      markNotificationRead: async (id) => {
+        await api.notifications.read(id);
+        set((state) => ({ notifications: state.notifications.map((item) => item.id === id ? { ...item, read: true } : item) }));
+      },
+      markAllNotificationsRead: async () => {
+        await api.notifications.readAll();
+        set((state) => ({ notifications: state.notifications.map((item) => ({ ...item, read: true })) }));
+      },
       addToast: (toast) => {
         const id = newId('toast');
         set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }));
@@ -562,30 +754,28 @@ export const useAppStore = create<AppState>()(
         authStatus: 'guest',
         authError: null,
         pendingVerification: null,
-        courses: seededCourses,
-        enrollments: baseEnrollments,
-        dictionary: initialDictionary,
-        sessions: seedSessions,
-        tutoringSlots: seedTutoringSlots,
+        courses: [],
+        managedCourses: [],
+        managedCoursesStatus: 'idle',
+        learningStatus: 'idle',
+        enrollments: [],
+        dictionary: [],
+        sessions: [],
+        tutoringSlots: [],
         assignmentSubmissions: [],
-        payments,
-        notifications,
+        payments: [],
+        notifications: [],
         toasts: [],
         sidebarOpen: false,
         sidebarCollapsed: false
       })
     }),
     {
-      name: 'lingua-lms-v8',
+      name: 'lingua-lms-v12',
       partialize: (state) => ({
-        courses: state.courses,
-        enrollments: state.enrollments,
-        dictionary: state.dictionary,
-        sessions: state.sessions,
-        tutoringSlots: state.tutoringSlots,
-        assignmentSubmissions: state.assignmentSubmissions,
-        payments: state.payments,
-        notifications: state.notifications,
+        // Backend-backed entities are deliberately not persisted locally. After a
+        // refresh they are reloaded for the authenticated session, preventing one
+        // account's dictionary/payments/schedule from leaking into another account.
         sidebarCollapsed: state.sidebarCollapsed
       })
     }
