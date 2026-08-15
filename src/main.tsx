@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import './styles/index.css';
+import './styles/lms-fixes.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
