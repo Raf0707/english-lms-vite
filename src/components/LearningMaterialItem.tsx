@@ -2,6 +2,7 @@ import { BookmarkCheck, BookmarkPlus, Download, ExternalLink, FileArchive, FileA
 import { useEffect, useState } from 'react';
 import { api, type BackendLearningMaterial } from '../services/api';
 import { useAppStore } from '../store/useAppStore';
+import { materialContentUrl } from '../utils/materialUrl';
 
 function MaterialIcon({ mimeType }: { mimeType: string }) {
   if (mimeType.startsWith('image/')) return <FileImage size={18} />;
@@ -38,64 +39,35 @@ export function LearningMaterialItem({
   onRemoved?: () => void;
 }) {
   const addToast = useAppStore((state) => state.addToast);
-  const [previewUrl, setPreviewUrl] = useState('');
   const [saved, setSaved] = useState(Boolean(material.saved || material.scope === 'LIBRARY'));
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const isImage = material.asset.mimeType.startsWith('image/');
+  const previewUrl = isImage ? materialContentUrl(material.id, 'inline') : '';
 
   useEffect(() => { setSaved(Boolean(material.saved || material.scope === 'LIBRARY')); }, [material.id, material.saved, material.scope]);
 
-  useEffect(() => {
-    let alive = true;
-    if (!isImage) return () => { alive = false; };
-    api.materials.url(material.id, 'inline').then((access) => { if (alive) setPreviewUrl(access.url); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [isImage, material.id]);
-
-  const open = async () => {
-    if (onOpen) { onOpen(material); return; }
-    const tab = window.open('about:blank', '_blank');
-    try {
-      const access = await api.materials.url(material.id, 'inline');
-      if (tab) { tab.opener = null; tab.location.replace(access.url); }
-      else window.location.assign(access.url);
-    } catch (error) {
-      tab?.close();
-      addToast({ title: 'Файл не открывается', text: error instanceof Error ? error.message : 'Не удалось получить ссылку на файл', tone: 'warning' });
+  const open = () => {
+    if (onOpen) {
+      onOpen(material);
+      return;
     }
+    const url = materialContentUrl(material.id, 'inline');
+    const tab = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!tab) window.location.assign(url);
   };
 
-  const download = async () => {
+  const download = () => {
     try {
-      const access = await api.materials.url(material.id, 'attachment');
-      // Download through a blob when MinIO CORS permits it. This is more reliable than
-      // relying on a cross-origin <a> and Content-Disposition alone (PDFs may otherwise open).
-      try {
-        const response = await fetch(access.url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = access.fileName || material.asset.originalName || 'material';
-        anchor.rel = 'noopener';
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
-      } catch {
-        // Fallback for deployments where object-storage CORS is intentionally restricted.
-        const anchor = document.createElement('a');
-        anchor.href = access.url;
-        anchor.target = '_blank';
-        anchor.rel = 'noopener';
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-      }
+      const anchor = document.createElement('a');
+      anchor.href = materialContentUrl(material.id, 'attachment');
+      anchor.download = material.asset.originalName || material.title || 'material';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
     } catch (error) {
-      addToast({ title: 'Не удалось скачать файл', text: error instanceof Error ? error.message : 'Не удалось получить ссылку на файл', tone: 'warning' });
+      addToast({ title: 'Не удалось скачать файл', text: error instanceof Error ? error.message : 'Ошибка скачивания', tone: 'warning' });
     }
   };
 
@@ -130,8 +102,8 @@ export function LearningMaterialItem({
       {isImage && previewUrl ? <img src={previewUrl} alt="" /> : <span className="learning-material-item__icon"><MaterialIcon mimeType={material.asset.mimeType} /></span>}
       <span className="learning-material-item__body"><strong>{material.title || material.asset.originalName}</strong><small>{material.asset.originalName !== material.title ? material.asset.originalName : material.asset.mimeType}{formatSize(material.asset.sizeBytes) ? ` · ${formatSize(material.asset.sizeBytes)}` : ''}</small></span>
       <span className="learning-material-item__actions">
-        <button type="button" onClick={() => void open()} title="Открыть"><ExternalLink size={15}/></button>
-        <button type="button" onClick={() => void download()} title="Скачать"><Download size={15}/></button>
+        <button type="button" onClick={open} title="Открыть"><ExternalLink size={15}/></button>
+        <button type="button" onClick={download} title="Скачать"><Download size={15}/></button>
       </span>
     </div>
     <div className="learning-material-secondary-actions">
